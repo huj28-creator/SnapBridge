@@ -1,0 +1,3 @@
+// Copy this to Local.xcconfig and enter your Apple development team ID.
+DEVELOPMENT_TEAM = YOUR_TEAM_ID
+SNAPBRIDGE_BUNDLE_PREFIX = com.yourname

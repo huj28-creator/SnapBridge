@@ -1,0 +1,3 @@
+// Public defaults. Personal signing settings stay in the ignored Local.xcconfig.
+SNAPBRIDGE_BUNDLE_PREFIX = com.example
+#include? "../Local.xcconfig"
