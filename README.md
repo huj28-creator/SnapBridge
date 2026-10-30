@@ -32,13 +32,15 @@ Once the Mac app is installed in Applications, enable **Start SnapBridge when I 
 
 ## Refresh the free iPhone installation
 
-Apple’s free Personal Team signing expires after seven days. After expiration the iPhone app stops opening until it is rebuilt and reinstalled. This is separate from saved device pairing. [Apple’s account documentation](https://developer.apple.com/help/account/basics/about-your-developer-account)
+Apple’s free Personal Team signing expires after seven days. An expired app needs refreshed signing before it can open again. This is separate from saved device pairing. [Apple’s account documentation](https://developer.apple.com/help/account/basics/about-your-developer-account)
 
-Connect and unlock the iPhone, then double-click **Refresh iPhone.command** in this folder. Xcode needs a working account login and an internet connection to renew signing. Keep the same team and bundle identifier; install over the existing app to preserve pairing and pending photos. **Do not delete the iPhone app first.** The script prints the resulting expiration date. Xcode can reuse an existing unexpired profile, so running the script early may keep the current expiration date.
+**Automatic Wi-Fi renewal:** the optional [local renewal helper](docs/renewal.md) refreshes only the provisioning profile, leaving the app and its data in place. It uses a native macOS calendar job two days before the verified expiration date, then exits. It needs no Codex session, paid membership, routine USB cable, or recurring pairing code. Profile renewal has been tested over Wi-Fi with a locked iPhone on iOS 18.6.2; iOS may still require manual developer trust. Availability depends on Apple’s signing service, the original signing certificate, a trusted reachable phone, and a working Xcode account login. See the setup and limitations before enabling it.
+
+For a manual rebuild, connect and unlock the iPhone, then double-click **Refresh iPhone.command** in this folder. Xcode needs a working account login and an internet connection. Keep the same team and bundle identifier; install over the existing app to preserve pairing and pending photos. **Do not delete the iPhone app first.** The script prints the resulting expiration date. Xcode can reuse an existing unexpired profile, so running the manual rebuild early may keep the current expiration date.
 
 ## Files and privacy
 
-- Native SwiftUI, AVFoundation, AppKit, Network.framework, and Multipeer Connectivity. No third-party packages or cloud service.
+- Photo transfer uses native SwiftUI, AVFoundation, AppKit, Network.framework, and Multipeer Connectivity; photos stay local. The optional renewal helper uses Xcode and libimobiledevice to request signing profiles from Apple.
 - Encrypted direct TLS/TCP over Wi-Fi or an Apple peer-to-peer link, authenticated with the saved random Keychain pairing token. One-time pairing and a fallback connection use encrypted Multipeer Connectivity. Tokens are not published in discovery. The saved Mac’s service is resolved directly without a device-list browse. Retries start quickly after a drop and back off to at most one attempt every four seconds during a persistent outage; background retries pause.
 - The camera’s original JPEG is transferred byte for byte, preserving full camera resolution, metadata, and JPEG quality. No resizing or recompression is applied. The Mac prepares a smaller display preview; saved files and clipboard images keep full resolution. PNG/TIFF clipboard alternatives use lossless encoding and honor EXIF orientation.
 - Mac photos are stored in `~/Library/Application Support/SnapBridge/Inbox`. **Open received photos** takes you there.
@@ -58,6 +60,7 @@ The project includes shared schemes **SnapBridgeMac** and **SnapBridgePhone**. S
 ```sh
 swift test --package-path .
 python3 scripts/test_clipboard.py
+python3 scripts/test_renewal.py
 ```
 
 To regenerate the project after changing its file list:
