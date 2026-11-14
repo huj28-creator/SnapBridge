@@ -1,5 +1,6 @@
 import UIKit
 import Combine
+import Photos
 
 struct PendingShot: Identifiable {
     let id: UUID
@@ -28,6 +29,7 @@ final class PhoneModel: ObservableObject {
     private var lastTransferProgress: TimeInterval = 0
     private var isForeground = false
     private var backgroundTask: UIBackgroundTaskIdentifier = .invalid
+    private var screenshotMonitor: ScreenshotMonitor?
 
     init() {
         outbox = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
@@ -36,7 +38,8 @@ final class PhoneModel: ObservableObject {
             try FileManager.default.createDirectory(at: outbox, withIntermediateDirectories: true)
             let urls = try FileManager.default.contentsOfDirectory(at: outbox, includingPropertiesForKeys: [.creationDateKey])
             pending = urls.compactMap { url in
-                guard url.pathExtension == "jpg", let id = UUID(uuidString: url.deletingPathExtension().lastPathComponent)
+                guard ["jpg", "jpeg", "png"].contains(url.pathExtension.lowercased()),
+                      let id = UUID(uuidString: url.deletingPathExtension().lastPathComponent)
                 else { return nil }
                 return PendingShot(id: id, url: url,
                                    date: (try? url.resourceValues(forKeys: [.creationDateKey]).creationDate) ?? Date())
@@ -93,6 +96,15 @@ final class PhoneModel: ObservableObject {
         isForeground = true
         endBackgroundTask()
         UIApplication.shared.isIdleTimerDisabled = true
+        if screenshotMonitor == nil {
+            screenshotMonitor = ScreenshotMonitor { [weak self] data, date, onSaved in
+                guard let self else { return }
+                let id = UUID()
+                self.captureStarts[id] = PerformanceTrace.now()
+                self.enqueue(data, id: id, date: date, onSaved: onSaved)
+            }
+        }
+        screenshotMonitor?.start()
         transport.start()
         camera.start()
         flush()
@@ -126,13 +138,28 @@ final class PhoneModel: ObservableObject {
         flush()
     }
 
-    private func enqueue(_ data: Data, id: UUID = UUID(), date: Date = Date()) {
+    private func enqueue(_ data: Data, id: UUID = UUID(), date: Date = Date(), onSaved: ((Bool) -> Void)? = nil) {
+        if !isForeground, backgroundTask == .invalid {
+            backgroundTask = UIApplication.shared.beginBackgroundTask(withName: "Finish screenshot delivery") { [weak self] in
+                guard let self else { return }
+                self.transport.pauseForBackground()
+                self.endBackgroundTask()
+            }
+        }
         guard pending.count + enqueuingCount < BridgeLimits.maxPendingPhotos else {
             error = "The queue holds 10 photos. Reconnect to your Mac before taking more."
+            onSaved?(false)
             return
         }
-        guard data.count <= BridgeLimits.maxPhotoBytes else { error = WireError.tooLarge.localizedDescription; return }
-        let url = outbox.appendingPathComponent("\(id.uuidString).jpg")
+        guard data.count <= BridgeLimits.maxPhotoBytes else {
+            error = WireError.tooLarge.localizedDescription
+            onSaved?(false)
+            return
+        }
+        let fileExtension: String
+        do { fileExtension = try PhotoProcessing.fileExtension(data) }
+        catch { self.error = error.localizedDescription; onSaved?(false); return }
+        let url = outbox.appendingPathComponent("\(id.uuidString).\(fileExtension)")
         enqueuingCount += 1
         ioQueue.async {
             let start = PerformanceTrace.now()
@@ -149,6 +176,7 @@ final class PhoneModel: ObservableObject {
                     }
                     self.error = nil
                     self.deliveryStatus = self.transport.connected ? "Sending to your Mac…" : "Photo queued. Connect to your Mac to send."
+                    onSaved?(true)
                     self.flush()
                 }
                 if let cg = try? PhotoProcessing.thumbnail(data, maxPixels: 256) {
@@ -160,6 +188,7 @@ final class PhoneModel: ObservableObject {
                     self.enqueuingCount -= 1
                     self.captureStarts.removeValue(forKey: id)
                     self.error = "Could not keep this photo: \(error.localizedDescription). Please retake it."
+                    onSaved?(false)
                 }
             }
         }
@@ -247,6 +276,7 @@ final class PhoneModel: ObservableObject {
             transport.pauseForBackground()
             endBackgroundTask()
         }
+        screenshotMonitor?.retryDeferred()
     }
 
     #if targetEnvironment(simulator)
@@ -281,4 +311,145 @@ final class PhoneModel: ObservableObject {
         }
     }
     #endif
+}
+
+/// Watches only newly added screenshot assets. Photo access is read-only; the monitor
+/// never edits, removes, or uploads ordinary camera photos from the Photos library.
+private final class ScreenshotMonitor: NSObject, PHPhotoLibraryChangeObserver {
+    private let queue = DispatchQueue(label: "local.snapbridge.screenshot-watch", qos: .userInitiated)
+    private let onScreenshot: (Data, Date, @escaping (Bool) -> Void) -> Void
+    private var fetchResult: PHFetchResult<PHAsset>?
+    private var registered = false
+    private var inFlight = Set<String>()
+    private var delivered = Set<String>()
+    private var deferredAssets: [PHAsset] = []
+    private var deferredIDs = Set<String>()
+    private let cursorKey = "screenshotTransferLastScanDate"
+    private let deliveredKey = "screenshotTransferDeliveredIDs"
+    private let deferredKey = "screenshotTransferDeferredIDs"
+
+    init(onScreenshot: @escaping (Data, Date, @escaping (Bool) -> Void) -> Void) {
+        self.onScreenshot = onScreenshot
+        delivered = Set(UserDefaults.standard.stringArray(forKey: deliveredKey) ?? [])
+        deferredIDs = Set(UserDefaults.standard.stringArray(forKey: deferredKey) ?? [])
+    }
+
+    func start() {
+        switch PHPhotoLibrary.authorizationStatus(for: .readWrite) {
+        case .authorized:
+            observeChanges()
+        case .notDetermined:
+            PHPhotoLibrary.requestAuthorization(for: .readWrite) { [weak self] status in
+                guard status == .authorized else { return }
+                self?.observeChanges()
+            }
+        case .limited, .denied, .restricted:
+            break
+        @unknown default:
+            break
+        }
+    }
+
+    private func observeChanges() {
+        queue.async {
+            if !self.registered {
+                PHPhotoLibrary.shared().register(self)
+                self.registered = true
+                self.fetchResult = PHAsset.fetchAssets(with: .image, options: Self.screenshotOptions())
+                if UserDefaults.standard.object(forKey: self.cursorKey) == nil {
+                    // First enablement starts now; do not send the user's existing screenshots.
+                    UserDefaults.standard.set(Date(), forKey: self.cursorKey)
+                    return
+                }
+            }
+            self.catchUp()
+        }
+    }
+
+    func photoLibraryDidChange(_ changeInstance: PHChange) {
+        queue.async {
+            guard let current = self.fetchResult,
+                  let changes = changeInstance.changeDetails(for: current) else { return }
+            self.fetchResult = changes.fetchResultAfterChanges
+            let newScreenshots = changes.insertedObjects.filter {
+                $0.mediaType == .image && $0.mediaSubtypes.contains(.photoScreenshot)
+            }
+            self.send(newScreenshots)
+        }
+    }
+
+    private func catchUp() {
+        let cursor = UserDefaults.standard.object(forKey: cursorKey) as? Date ?? Date()
+        let options = Self.screenshotOptions()
+        options.predicate = NSCompoundPredicate(andPredicateWithSubpredicates: [
+            options.predicate!,
+            NSPredicate(format: "creationDate >= %@", cursor.addingTimeInterval(-10) as NSDate)
+        ])
+        let recent = PHAsset.fetchAssets(with: .image, options: options)
+        var assets: [PHAsset] = []
+        recent.enumerateObjects { asset, _, _ in assets.append(asset) }
+        let deferred = PHAsset.fetchAssets(withLocalIdentifiers: Array(deferredIDs), options: nil)
+        deferred.enumerateObjects { asset, _, _ in assets.append(asset) }
+        UserDefaults.standard.set(Date(), forKey: cursorKey)
+        send(assets)
+    }
+
+    private static func screenshotOptions() -> PHFetchOptions {
+        let options = PHFetchOptions()
+        options.predicate = NSPredicate(format: "(mediaSubtype & %d) != 0", PHAssetMediaSubtype.photoScreenshot.rawValue)
+        options.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: true)]
+        return options
+    }
+
+    private func send(_ assets: [PHAsset]) {
+        for asset in assets {
+            let id = asset.localIdentifier
+            guard !delivered.contains(id), inFlight.insert(id).inserted else { continue }
+            let request = PHImageRequestOptions()
+            request.isNetworkAccessAllowed = false
+            request.deliveryMode = .highQualityFormat
+            PHImageManager.default().requestImageDataAndOrientation(for: asset, options: request) { [weak self] data, _, _, _ in
+                guard let self else { return }
+                self.queue.async {
+                    guard let data, (try? PhotoProcessing.fileExtension(data)) != nil else {
+                        self.deferAsset(asset)
+                        return
+                    }
+                    DispatchQueue.main.async {
+                        self.onScreenshot(data, asset.creationDate ?? Date()) { accepted in
+                            self.queue.async {
+                                self.inFlight.remove(id)
+                                if accepted {
+                                    self.delivered.insert(id)
+                                    self.deferredIDs.remove(id)
+                                    if self.delivered.count > 256 { self.delivered = Set(self.delivered.suffix(128)) }
+                                    UserDefaults.standard.set(Array(self.delivered), forKey: self.deliveredKey)
+                                    UserDefaults.standard.set(Array(self.deferredIDs), forKey: self.deferredKey)
+                                } else {
+                                    self.deferAsset(asset)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func deferAsset(_ asset: PHAsset) {
+        let id = asset.localIdentifier
+        inFlight.remove(id)
+        guard deferredIDs.insert(id).inserted, deferredAssets.count < 100 else { return }
+        deferredAssets.append(asset)
+        UserDefaults.standard.set(Array(deferredIDs), forKey: deferredKey)
+    }
+
+    func retryDeferred() {
+        queue.async {
+            let retry = self.deferredAssets
+            self.deferredAssets.removeAll()
+            self.deferredIDs.removeAll()
+            self.send(retry)
+        }
+    }
 }

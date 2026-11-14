@@ -2,10 +2,11 @@ import AppKit
 import ImageIO
 import UniformTypeIdentifiers
 
-/// Original JPEG is ready immediately. Lossless compatibility formats are computed once off the UI thread.
+/// Original image is ready immediately. Lossless compatibility formats are computed once off the UI thread.
 final class PhotoClipboard: NSObject, NSPasteboardItemDataProvider {
     static let jpegType = NSPasteboard.PasteboardType(UTType.jpeg.identifier)
-    let jpeg: Data
+    let original: Data
+    let originalType: NSPasteboard.PasteboardType
     let preview: NSImage
     private let queue = DispatchQueue(label: "local.snapbridge.clipboard", qos: .userInitiated)
     private var bitmap: NSBitmapImageRep?
@@ -19,12 +20,16 @@ final class PhotoClipboard: NSObject, NSPasteboardItemDataProvider {
         return pasteboard.writeObjects(urls.map { $0 as NSURL })
     }
 
-    init(jpeg: Data) throws {
-        self.jpeg = jpeg
-        let thumbnail = try PhotoProcessing.thumbnail(jpeg, maxPixels: 1600)
+    init(image: Data) throws {
+        original = image
+        let ext = try PhotoProcessing.fileExtension(image)
+        originalType = NSPasteboard.PasteboardType(ext == "png" ? UTType.png.identifier : UTType.jpeg.identifier)
+        let thumbnail = try PhotoProcessing.thumbnail(image, maxPixels: 1600)
         preview = NSImage(cgImage: thumbnail, size: NSSize(width: thumbnail.width, height: thumbnail.height))
         super.init()
     }
+
+    convenience init(jpeg: Data) throws { try self.init(image: jpeg) }
 
     func prewarm() {
         queue.async { [weak self] in _ = self?.representationLocked(.png) }
@@ -32,13 +37,13 @@ final class PhotoClipboard: NSObject, NSPasteboardItemDataProvider {
 
     func makeItem() -> NSPasteboardItem {
         let item = NSPasteboardItem()
-        item.setData(jpeg, forType: Self.jpegType)
+        item.setData(original, forType: originalType)
         item.setDataProvider(self, forTypes: [.png, .tiff])
         return item
     }
 
     func data(for type: NSPasteboard.PasteboardType) -> Data? {
-        if type == Self.jpegType { return jpeg }
+        if type == originalType { return original }
         return queue.sync { representationLocked(type) }
     }
 
@@ -48,10 +53,11 @@ final class PhotoClipboard: NSObject, NSPasteboardItemDataProvider {
     }
 
     private func representationLocked(_ type: NSPasteboard.PasteboardType) -> Data? {
+        if type == originalType { return original }
         if type == .png, let png { return png }
         if type == .tiff, let tiff { return tiff }
         if bitmap == nil {
-            guard let image = try? PhotoProcessing.fullResolutionImage(jpeg)
+            guard let image = try? PhotoProcessing.fullResolutionImage(original)
             else { return nil }
             bitmap = NSBitmapImageRep(cgImage: image)
         }

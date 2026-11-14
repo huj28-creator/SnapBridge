@@ -189,7 +189,7 @@ final class CameraController: NSObject, ObservableObject, AVCapturePhotoCaptureD
         processingQueue.async {
             let start = PerformanceTrace.now()
             do {
-                let data = try PhotoProcessing.prepareJPEG(raw)
+                let data = try PhotoProcessing.prepareImage(raw)
                 PerformanceTrace.record("phone_prepare", id: info.0, since: start, bytes: data.count)
                 let captured = CapturedPhoto(id: info.0, data: data, date: info.1, startedAt: info.2)
                 DispatchQueue.main.async { self.capturing = false; self.onPhoto?(captured) }

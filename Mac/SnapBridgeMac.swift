@@ -145,7 +145,7 @@ final class MacModel: ObservableObject {
             receivedCount = photos.count
             if let latest = photos.last {
                 latestURL = latest.url
-                if let data = try? Data(contentsOf: latest.url), let clipboard = try? PhotoClipboard(jpeg: data) {
+                if let data = try? Data(contentsOf: latest.url), let clipboard = try? PhotoClipboard(image: data) {
                     latestClipboard = clipboard
                     latestImage = clipboard.preview
                 }
@@ -167,7 +167,7 @@ final class MacModel: ObservableObject {
                     DispatchQueue.main.async { self.receivedCount = count; completion(.success(())) }
                     return
                 }
-                let clipboard = try PhotoClipboard(jpeg: data)
+                let clipboard = try PhotoClipboard(image: data)
                 let gridImage = try PhotoProcessing.thumbnail(data, maxPixels: 320)
                 let gridThumbnail = NSImage(cgImage: gridImage, size: NSSize(width: gridImage.width, height: gridImage.height))
                 let retained = try self.photoStore.save(data, id: id)
@@ -238,7 +238,7 @@ final class MacModel: ObservableObject {
 
     func copyPhoto(_ photo: BatchPhoto) {
         receiveQueue.async {
-            guard let data = try? Data(contentsOf: photo.url), let clipboard = try? PhotoClipboard(jpeg: data) else { return }
+            guard let data = try? Data(contentsOf: photo.url), let clipboard = try? PhotoClipboard(image: data) else { return }
             DispatchQueue.main.async {
                 let pasteboard = NSPasteboard.general
                 pasteboard.clearContents()

@@ -21,7 +21,7 @@ struct PhotoStore {
         let urls = try FileManager.default.contentsOfDirectory(at: directory,
                                                                includingPropertiesForKeys: Array(keys))
         return try urls.compactMap { url -> StoredPhoto? in
-            guard url.pathExtension.lowercased() == "jpg",
+            guard ["jpg", "jpeg", "png"].contains(url.pathExtension.lowercased()),
                   let id = UUID(uuidString: url.deletingPathExtension().lastPathComponent) else { return nil }
             let values = try url.resourceValues(forKeys: keys)
             guard values.isRegularFile == true, values.isSymbolicLink != true else { return nil }
@@ -49,12 +49,19 @@ struct PhotoStore {
     }
 
     func url(for id: UUID) -> URL {
-        directory.appendingPathComponent("\(id.uuidString).jpg")
+        for ext in ["jpg", "jpeg", "png"] {
+            let candidate = directory.appendingPathComponent("\(id.uuidString).\(ext)")
+            if FileManager.default.fileExists(atPath: candidate.path) { return candidate }
+        }
+        return directory.appendingPathComponent("\(id.uuidString).jpg")
     }
 
     @discardableResult
     func save(_ data: Data, id: UUID) throws -> [StoredPhoto] {
-        if !contains(id) { try data.write(to: url(for: id), options: .atomic) }
+        if !contains(id) {
+            let destination = directory.appendingPathComponent("\(id.uuidString).\(try PhotoProcessing.fileExtension(data))")
+            try data.write(to: destination, options: .atomic)
+        }
         return try retainNewest()
     }
 }

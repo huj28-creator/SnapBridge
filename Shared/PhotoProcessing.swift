@@ -16,11 +16,21 @@ enum PhotoProcessing {
         return source
     }
 
-    /// Sends the camera's original encoded JPEG, including full resolution and metadata.
-    static func prepareJPEG(_ data: Data) throws -> Data {
-        let source = try source(data)
-        guard CGImageSourceGetType(source) as String? == UTType.jpeg.identifier else { throw WireError.invalidPhoto }
+    /// Keep the original JPEG or PNG bytes so camera photos and screenshots remain lossless in transit.
+    static func prepareImage(_ data: Data) throws -> Data {
+        _ = try fileExtension(data)
         return data
+    }
+
+    static func fileExtension(_ data: Data) throws -> String {
+        let imageSource = try source(data)
+        guard let typeIdentifier = CGImageSourceGetType(imageSource) as String?,
+              let type = UTType(typeIdentifier), type.conforms(to: .image) else {
+            throw WireError.invalidPhoto
+        }
+        if type.conforms(to: .jpeg) { return "jpg" }
+        if type.conforms(to: .png) { return "png" }
+        throw WireError.invalidPhoto
     }
 
     static func fullResolutionImage(_ data: Data) throws -> CGImage {

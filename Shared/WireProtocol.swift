@@ -83,7 +83,9 @@ struct WirePacket {
         let payload = data.suffix(from: 4 + length)
         guard payload.count <= BridgeLimits.maxPhotoBytes else { throw WireError.tooLarge }
         if header.kind == .photo {
-            guard payload.count >= 4, payload.starts(with: [0xFF, 0xD8, 0xFF])
+            let isJPEG = payload.starts(with: [0xFF, 0xD8, 0xFF])
+            let isPNG = payload.starts(with: [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A])
+            guard isJPEG || isPNG
             else { throw WireError.invalidPhoto }
         } else if !payload.isEmpty {
             throw WireError.invalidHeader
@@ -99,7 +101,7 @@ enum WireError: LocalizedError {
         case .truncated: return "The transfer was incomplete. Please try again."
         case .tooLarge: return "The photo exceeds the 16 MB transfer limit."
         case .invalidHeader: return "The transfer could not be understood."
-        case .invalidPhoto: return "The transfer did not contain a JPEG photo."
+        case .invalidPhoto: return "The transfer did not contain a supported JPEG or PNG image."
         case .unsupportedVersion: return "Update SnapBridge on both devices."
         }
     }
