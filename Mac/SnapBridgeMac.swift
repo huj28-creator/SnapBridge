@@ -177,8 +177,13 @@ final class MacModel: ObservableObject {
                     return
                 }
                 let clipboard = try PhotoClipboard(image: data)
-                let gridImage = try PhotoProcessing.thumbnail(data, maxPixels: 320)
-                let gridThumbnail = NSImage(cgImage: gridImage, size: NSSize(width: gridImage.width, height: gridImage.height))
+                let gridThumbnail: NSImage
+                if clipboard.originalType == .png {
+                    gridThumbnail = clipboard.preview
+                } else {
+                    let gridImage = try PhotoProcessing.thumbnail(data, maxPixels: 320)
+                    gridThumbnail = NSImage(cgImage: gridImage, size: NSSize(width: gridImage.width, height: gridImage.height))
+                }
                 let retained = try self.photoStore.save(data, id: id, isPNG: clipboard.originalType == .png)
                 self.recentReceiptIDs.append(id.uuidString)
                 self.recentReceiptIDs = Array(self.recentReceiptIDs.suffix(256))

@@ -1,10 +1,9 @@
 """Read fresh screenshot candidates through the Mac's existing iPhone pairing."""
-import base64
 import ctypes as c
 import hashlib
 import json
-import os
 import re
+import struct
 import sys
 import time
 import uuid
@@ -189,6 +188,7 @@ def watch(lib, udid, since):
                 else:
                     seen.add(path)
             for modified, path, size in sorted(fresh):
+                started = time.monotonic()
                 data = connection.read(path, size)
                 if data is None or not data.endswith(b"IEND\xaeB\x60\x82"):
                     continue
@@ -198,21 +198,31 @@ def watch(lib, udid, since):
                     continue
                 active_folder = path.split(b"/")[1]
                 key = hashlib.sha256(udid + path + str(modified).encode()).digest()[:16]
-                print(json.dumps({
+                header = json.dumps({
                     "id": str(uuid.UUID(bytes=key)),
                     "date": modified / 1_000_000_000,
-                    "image": base64.b64encode(data).decode("ascii"),
-                }), flush=True)
-            print("{}", flush=True)
+                    "size": len(data),
+                    "readMilliseconds": (time.monotonic() - started) * 1000,
+                    "transport": "USB" if mode == 2 else "Wi-Fi",
+                }).encode("ascii")
+                sys.stdout.buffer.write(struct.pack(">I", len(header)) + header)
+                sys.stdout.buffer.write(data)
+                sys.stdout.buffer.flush()
+            heartbeat()
             delay = 1
-            time.sleep(0.30 if mode == 2 else 0.65)
+            time.sleep(0.12 if mode == 2 else 0.40)
         except MediaError:
             if connection is not None:
                 connection.close()
                 connection = None
-            print("{}", flush=True)
+            heartbeat()
             time.sleep(delay)
             delay = min(delay * 2, 8)
+
+
+def heartbeat():
+    sys.stdout.buffer.write(b"\0\0\0\0")
+    sys.stdout.buffer.flush()
 
 
 if __name__ == "__main__":

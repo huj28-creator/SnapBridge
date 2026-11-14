@@ -6,7 +6,9 @@ final class PhoneScreenshots {
     private struct Screenshot: Decodable {
         let id: UUID
         let date: Double
-        let image: Data
+        let size: Int
+        let readMilliseconds: Double
+        let transport: String
     }
 
     private let receive: (UUID, Data, Date) -> Void
@@ -15,6 +17,7 @@ final class PhoneScreenshots {
     private var process: Process?
     private var pipe: Pipe?
     private var buffer = Data()
+    private var nextImage: Screenshot?
     private var lastResponse = Date()
     private var watchdog: DispatchSourceTimer?
     private var running = false
@@ -46,6 +49,7 @@ final class PhoneScreenshots {
         pipe = nil
         process = nil
         buffer.removeAll(keepingCapacity: false)
+        nextImage = nil
     }
 
     private func launch() {
@@ -106,22 +110,36 @@ final class PhoneScreenshots {
     private func consume(_ chunk: Data) {
         buffer.append(chunk)
         var consumed = buffer.startIndex
-        while let end = buffer[consumed...].firstIndex(of: 10) {
-            let line = buffer[consumed..<end]
-            consumed = end + 1
-            guard line.count > 2, line.count <= BridgeLimits.maxPhotoBytes * 4 / 3 + 256,
-                  let shot = try? JSONDecoder().decode(Screenshot.self, from: line),
-                  shot.image.count <= BridgeLimits.maxPhotoBytes,
-                  let source = try? PhotoProcessing.source(shot.image),
+        while true {
+            if nextImage == nil {
+                guard buffer.endIndex - consumed >= 4 else { break }
+                let headerSize = buffer[consumed..<consumed + 4].reduce(0) { ($0 << 8) | Int($1) }
+                if headerSize > 1024 { restart(); return }
+                guard buffer.endIndex - consumed >= 4 + headerSize else { break }
+                consumed += 4
+                if headerSize == 0 { continue }
+                let header = buffer[consumed..<consumed + headerSize]
+                consumed += headerSize
+                guard let shot = try? JSONDecoder().decode(Screenshot.self, from: header),
+                      (1...BridgeLimits.maxPhotoBytes).contains(shot.size)
+                else { restart(); return }
+                nextImage = shot
+            }
+            guard let shot = nextImage, buffer.endIndex - consumed >= shot.size else { break }
+            let image = Data(buffer[consumed..<consumed + shot.size])
+            consumed += shot.size
+            nextImage = nil
+            guard let source = try? PhotoProcessing.source(image),
                   let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as NSDictionary?,
                   let exif = properties[kCGImagePropertyExifDictionary] as? NSDictionary,
                   exif[kCGImagePropertyExifUserComment] as? String == "Screenshot"
             else { continue }
+            PerformanceTrace.record("screenshot_read_\(shot.transport)", id: shot.id,
+                                    since: PerformanceTrace.now() - shot.readMilliseconds / 1000, bytes: shot.size)
             DispatchQueue.main.async { [receive] in
-                receive(shot.id, shot.image, Date(timeIntervalSince1970: shot.date))
+                receive(shot.id, image, Date(timeIntervalSince1970: shot.date))
             }
         }
         if consumed > buffer.startIndex { buffer.removeSubrange(buffer.startIndex..<consumed) }
-        if buffer.count > BridgeLimits.maxPhotoBytes * 4 / 3 + 256 { restart() }
     }
 }

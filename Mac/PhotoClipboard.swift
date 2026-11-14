@@ -38,7 +38,7 @@ final class PhotoClipboard: NSObject, NSPasteboardItemDataProvider {
     func makeItem() -> NSPasteboardItem {
         let item = NSPasteboardItem()
         item.setData(original, forType: originalType)
-        item.setDataProvider(self, forTypes: [.png, .tiff])
+        item.setDataProvider(self, forTypes: originalType == .png ? [.tiff] : [.png, .tiff])
         return item
     }
 
