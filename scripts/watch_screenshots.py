@@ -1,5 +1,6 @@
 """Read fresh screenshot candidates through the Mac's existing iPhone pairing."""
 import ctypes as c
+from concurrent.futures import ThreadPoolExecutor
 import hashlib
 import json
 import re
@@ -111,6 +112,11 @@ class MediaConnection:
 
 
 def watch(lib, udid, since):
+    with ThreadPoolExecutor(max_workers=2) as workers:
+        watch_connection(lib, udid, since, workers)
+
+
+def watch_connection(lib, udid, since, workers):
     seen = set()
     previewed = set()
     initialized = set()
@@ -198,14 +204,15 @@ def watch(lib, udid, since):
                         if preview:
                             send_frame(screenshot_id(udid, path, modified), modified, "Wi-Fi", preview, preview=True)
                             previewed.add(key)
-            # Check for new arrivals between originals so a burst's thumbnails
-            # do not have to wait for every full-size file ahead of them.
+            # Keep the existing fast path for a single file. Bound wireless
+            # concurrency to three originals and check for new previews between batches.
+            burst = fresh[:3] if mode == 4 else fresh[:1]
             sent_original = False
-            for modified, path, size in fresh:
+            for (modified, path, size), (data, read_ms) in zip(
+                burst, read_burst(lib, udid, connection, burst, workers)
+            ):
                 shot_id = screenshot_id(udid, path, modified)
                 transport = "USB" if mode == 2 else "Wi-Fi"
-                started = time.monotonic()
-                data = connection.read(path, size)
                 if data is None or not data.endswith(b"IEND\xaeB\x60\x82"):
                     continue
                 seen.add(path)
@@ -214,13 +221,11 @@ def watch(lib, udid, since):
                 if b"Screenshot" not in data:
                     continue
                 active_folder = path.split(b"/")[1]
-                send_frame(shot_id, modified, transport, data,
-                           read_ms=(time.monotonic() - started) * 1000)
+                send_frame(shot_id, modified, transport, data, read_ms=read_ms)
                 sent_original = True
-                break
             heartbeat()
             delay = 1
-            if len(fresh) <= 1 or not sent_original:
+            if len(fresh) <= len(burst) or not sent_original:
                 time.sleep(0.12 if mode == 2 else 0.25)
         except MediaError:
             if connection is not None:
@@ -229,6 +234,37 @@ def watch(lib, udid, since):
             heartbeat()
             time.sleep(delay)
             delay = min(delay * 2, 8)
+
+
+def timed_read(connection, shot):
+    _, path, size = shot
+    started = time.monotonic()
+    data = connection.read(path, size)
+    return data, (time.monotonic() - started) * 1000
+
+
+def read_wireless_original(lib, udid, shot):
+    connection = MediaConnection(lib, udid, 4)
+    try:
+        return timed_read(connection, shot)
+    finally:
+        connection.close()
+
+
+def read_burst(lib, udid, connection, shots, workers):
+    if not shots:
+        return
+    extra = [workers.submit(read_wireless_original, lib, udid, shot) for shot in shots[1:]]
+    try:
+        yield timed_read(connection, shots[0])
+        for shot, result in zip(shots[1:], extra):
+            try:
+                yield result.result()
+            except MediaError:
+                yield timed_read(connection, shot)
+    finally:
+        for result in extra:
+            result.cancel()
 
 
 def screenshot_id(udid, path, modified):
