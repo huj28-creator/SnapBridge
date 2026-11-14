@@ -57,9 +57,9 @@ struct PhotoStore {
     }
 
     @discardableResult
-    func save(_ data: Data, id: UUID) throws -> [StoredPhoto] {
+    func save(_ data: Data, id: UUID, isPNG: Bool = false) throws -> [StoredPhoto] {
         if !contains(id) {
-            let destination = directory.appendingPathComponent("\(id.uuidString).\(try PhotoProcessing.fileExtension(data))")
+            let destination = directory.appendingPathComponent("\(id.uuidString).\(isPNG ? "png" : "jpg")")
             try data.write(to: destination, options: .atomic)
         }
         return try retainNewest()

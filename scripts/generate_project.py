@@ -48,15 +48,15 @@ def obj(key, value):
     return uid(key)
 
 shared = ["Shared/WireProtocol.swift", "Shared/KeychainStore.swift", "Shared/NearbyTransport.swift", "Shared/PhotoProcessing.swift", "Shared/PerformanceTrace.swift", "Shared/FastPhotoChannel.swift"]
-mac = ["Mac/SnapBridgeMac.swift", "Shared/PhotoStore.swift", "Mac/PhotoClipboard.swift", "Shared/PhotoBatch.swift"]
+mac = ["Mac/SnapBridgeMac.swift", "Mac/PhoneScreenshots.swift", "Shared/PhotoStore.swift", "Mac/PhotoClipboard.swift", "Shared/PhotoBatch.swift"]
 phone = ["iPhone/SnapBridgePhone.swift", "iPhone/CameraController.swift", "iPhone/PhoneModel.swift"]
 files = shared + mac + phone + ["Resources/Mac-Info.plist", "Resources/iPhone-Info.plist",
-                               "Resources/SnapBridgeIcon.icns", "Resources/Assets.xcassets", "Resources/Signing.xcconfig"]
+                               "Resources/SnapBridgeIcon.icns", "Resources/Assets.xcassets", "Resources/Signing.xcconfig", "scripts/watch_screenshots.py"]
 for path in files:
-    kind = "sourcecode.swift" if path.endswith(".swift") else "text.plist.xml" if path.endswith(".plist") else "folder.assetcatalog" if path.endswith(".xcassets") else "text.xcconfig" if path.endswith(".xcconfig") else "image.icns"
+    kind = "sourcecode.swift" if path.endswith(".swift") else "text.script.python" if path.endswith(".py") else "text.plist.xml" if path.endswith(".plist") else "folder.assetcatalog" if path.endswith(".xcassets") else "text.xcconfig" if path.endswith(".xcconfig") else "image.icns"
     obj(path, f'isa = PBXFileReference; lastKnownFileType = {kind}; path = "{path}"; sourceTree = "<group>";')
 
-targets = [("SnapBridgeMac", "SnapBridge", shared + mac, ["Resources/SnapBridgeIcon.icns"], "macosx"),
+targets = [("SnapBridgeMac", "SnapBridge", shared + mac, ["Resources/SnapBridgeIcon.icns", "scripts/watch_screenshots.py"], "macosx"),
            ("SnapBridgePhone", "SnapBridgeCamera", shared + phone, ["Resources/Assets.xcassets"], "iphoneos")]
 for target, product, sources, resources, sdk in targets:
     obj(target + "Product", f'isa = PBXFileReference; explicitFileType = wrapper.application; path = "{product}.app"; sourceTree = BUILT_PRODUCTS_DIR;')

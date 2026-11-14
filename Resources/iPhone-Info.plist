@@ -31,8 +31,6 @@
 	<string>Take a photo and send it straight to your paired Mac, ready to paste into a chat.</string>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>SnapBridge connects to your saved device and transfers the photos you take directly to your Mac.</string>
-	<key>NSPhotoLibraryUsageDescription</key>
-	<string>SnapBridge watches for new screenshots so it can send their original images to your paired Mac automatically. It does not change or delete anything in your photo library.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

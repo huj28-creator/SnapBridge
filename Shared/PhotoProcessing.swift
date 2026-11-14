@@ -16,9 +16,9 @@ enum PhotoProcessing {
         return source
     }
 
-    /// Keep the original JPEG or PNG bytes so camera photos and screenshots remain lossless in transit.
-    static func prepareImage(_ data: Data) throws -> Data {
-        _ = try fileExtension(data)
+    /// Keep the camera's original JPEG bytes.
+    static func prepareJPEG(_ data: Data) throws -> Data {
+        guard try fileExtension(data) == "jpg" else { throw WireError.invalidPhoto }
         return data
     }
 

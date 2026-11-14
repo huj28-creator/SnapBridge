@@ -16,6 +16,7 @@ final class MacDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var statusItem: NSStatusItem!
     private var setupWindow: NSWindow?
     private var previewPanel: NSPanel?
+    private var screenshots: PhoneScreenshots?
     private var subscriptions = Set<AnyCancellable>()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -40,6 +41,10 @@ final class MacDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                                                      accessibilityDescription: "SnapBridge")
         }.store(in: &subscriptions)
         model.transport.start()
+        screenshots = PhoneScreenshots { [weak self] id, data, date in
+            self?.model.receive(id: id, data: data, date: date) { _ in }
+        }
+        screenshots?.start()
         if !model.transport.hasPairedPhone || CommandLine.arguments.contains("--pair") { showSetup() }
     }
 
@@ -69,6 +74,10 @@ final class MacDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
     @objc func openInbox() { NSWorkspace.shared.open(model.inbox) }
     @objc func quit() { NSApp.terminate(nil) }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        screenshots?.stop()
+    }
 
     private func showPreview() {
         let wasVisible = previewPanel?.isVisible == true
@@ -157,7 +166,7 @@ final class MacModel: ObservableObject {
         }
     }
 
-    private func receive(id: UUID, data: Data, date: Date, completion: @escaping (Result<Void, Error>) -> Void) {
+    fileprivate func receive(id: UUID, data: Data, date: Date, completion: @escaping (Result<Void, Error>) -> Void) {
         let start = PerformanceTrace.now()
         receiveQueue.async {
             do {
@@ -170,7 +179,7 @@ final class MacModel: ObservableObject {
                 let clipboard = try PhotoClipboard(image: data)
                 let gridImage = try PhotoProcessing.thumbnail(data, maxPixels: 320)
                 let gridThumbnail = NSImage(cgImage: gridImage, size: NSSize(width: gridImage.width, height: gridImage.height))
-                let retained = try self.photoStore.save(data, id: id)
+                let retained = try self.photoStore.save(data, id: id, isPNG: clipboard.originalType == .png)
                 self.recentReceiptIDs.append(id.uuidString)
                 self.recentReceiptIDs = Array(self.recentReceiptIDs.suffix(256))
                 UserDefaults.standard.set(self.recentReceiptIDs, forKey: "recentReceiptIDs")
@@ -189,6 +198,13 @@ final class MacModel: ObservableObject {
                     self.copyLatest()
                     self.onNewPhoto?()
                     PerformanceTrace.record("mac_preview_scheduled", id: id, since: start, bytes: data.count)
+                    if clipboard.originalType == .png {
+                        let secondsSinceSave = Date().timeIntervalSince(date)
+                        if secondsSinceSave >= 0 {
+                            PerformanceTrace.record("screenshot_save_to_popup", id: id,
+                                                    since: PerformanceTrace.now() - secondsSinceSave)
+                        }
+                    }
                     completion(.success(()))
                 }
             } catch { DispatchQueue.main.async { completion(.failure(error)) } }

@@ -14,7 +14,9 @@ Turn the iPhone either way horizontally for landscape capture. The camera contro
 
 **Pairing happens once.** The saved Mac remains the destination until you choose to replace it. The app maintains its connection while open and reconnects automatically after disconnection or relaunch; there is no proximity trigger or manual reconnect step. There is no code to enter for each photo, session, or day. To switch computers, choose **Change paired Mac** in the iPhone connection settings. To replace the phone, choose **Change paired iPhone** on the Mac.
 
-**Screenshots send automatically too.** After you allow Photos access, SnapBridge watches for newly created screenshots and sends their original PNG bytes through the same queue, clipboard, popup, and multi-photo grouping. It does not import old screenshots, ordinary Photos-library pictures, or change/delete anything in Photos. No in-app mode or extra tap is needed. iOS may suspend SnapBridge after you switch apps, so an already-running app can transfer during its short background window, and any missed screenshot is picked up when SnapBridge next opens; iOS does not allow this app to guarantee an immediate transfer while it is suspended or force-quit. For automatic detection, choose Full Access in the iOS Photos permission prompt.
+**iPhone screenshots through the Mac.** A Mac with an existing trusted iPhone connection can pick up newly saved screenshots while SnapBridge runs on the Mac. Use the normal screenshot buttons and let iOS save the result. The original PNG goes to the same popup, clipboard and Inbox as camera photos, with one combined 20-image limit. USB is preferred. Wi-Fi uses the phone’s existing Wi-Fi device connection when reachable, and timing varies. Screen recordings and screenshots saved only as PDFs are excluded.
+
+To enable this on a Mac that already trusts the iPhone, install Homebrew’s `libimobiledevice` and Python 3. Use `idevice_id -l` with the phone connected to get its identifier. Write just that identifier to `~/Library/Application Support/SnapBridge/ScreenshotPhone` and relaunch SnapBridge on the Mac. Remove that file and relaunch to disable it. The Mac reads new PNG candidates in the selected phone’s media folder and imports only images tagged as screenshots.
 
 ## First installation
 
@@ -24,7 +26,7 @@ Requirements: iOS 17 or later, macOS 14 or later, Xcode, and an Apple account co
 2. In **Xcode → Settings → Apple Accounts**, sign in. If an existing account says Authentication Expired, refresh it there. Enter credentials in Xcode, never in chat.
 3. Select the **SnapBridgePhone** scheme and your connected iPhone. In **Signing & Capabilities**, choose your development team if Xcode asks.
 4. Build/run **SnapBridgeMac** on the Mac, and **SnapBridgePhone** on the connected iPhone. If required, enable Developer Mode on the phone and trust the development app in iPhone Settings.
-5. Allow Camera, Local Network, and Photos access. Choose Full Access for Photos so newly created screenshots can be detected automatically. Open the Mac receiver, choose this Mac on the phone, and enter the displayed code **once**.
+5. Allow Camera and Local Network access. Open the Mac receiver, choose this Mac on the phone, and enter the displayed code **once**.
 
 If re-pairing after choosing **Change paired Mac**, selecting the Mac on the phone requests the setup code locally on the Mac. You can also open **Pair iPhone / Settings…** from the Mac menu bar to reveal it. Ordinary connection drops preserve pairing and never require a new code.
 
@@ -42,7 +44,7 @@ For a manual rebuild, connect and unlock the iPhone, then double-click **Refresh
 
 ## Files and privacy
 
-- Photo transfer uses native SwiftUI, AVFoundation, PhotoKit, AppKit, Network.framework, and Multipeer Connectivity; photos stay local. Screenshot monitoring reads only new screenshot assets and sends the original PNG without recompression. The optional renewal helper uses Xcode and libimobiledevice to request signing profiles from Apple.
+- Photo transfer uses native SwiftUI, AVFoundation, AppKit, Network.framework, and Multipeer Connectivity; photos stay local. The optional screenshot receiver reads via the Mac’s existing trusted device connection and preserves the original PNG. The optional renewal helper uses Xcode and libimobiledevice to request signing profiles from Apple.
 - Encrypted direct TLS/TCP over Wi-Fi or an Apple peer-to-peer link, authenticated with the saved random Keychain pairing token. One-time pairing and a fallback connection use encrypted Multipeer Connectivity. Tokens are not published in discovery. The saved Mac’s service is resolved directly without a device-list browse. Retries start quickly after a drop and back off to at most one attempt every four seconds during a persistent outage; background retries pause.
 - The camera’s original JPEG is transferred byte for byte, preserving full camera resolution, metadata, and JPEG quality. No resizing or recompression is applied. The Mac prepares a smaller display preview; saved files and clipboard images keep full resolution. PNG/TIFF clipboard alternatives use lossless encoding and honor EXIF orientation.
 - Mac photos are stored in `~/Library/Application Support/SnapBridge/Inbox`. **Open received photos** takes you there.
