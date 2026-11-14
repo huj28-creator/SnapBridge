@@ -16,6 +16,7 @@ final class MacDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var statusItem: NSStatusItem!
     private var setupWindow: NSWindow?
     private var previewPanel: NSPanel?
+    private var previewIsGrid = false
     private var screenshots: PhoneScreenshots?
     private var subscriptions = Set<AnyCancellable>()
 
@@ -99,23 +100,28 @@ final class MacDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             panel.contentView = NSHostingView(rootView: PhotoPreview(model: model))
             previewPanel = panel
         }
-        let count = model.batchPhotos.count
-        previewPanel?.title = count > 1 ? "\(count) photos received" : "Photo received"
-        if !wasVisible || count == 2 {
+        let count = min(PhotoStore.defaultLimit, model.batchPhotos.count + model.pendingScreenshots.count)
+        let isGrid = count > 1
+        let expanding = isGrid && !previewIsGrid
+        previewPanel?.title = isGrid ? "\(count) photos" : "Photo received"
+        if !wasVisible || expanding {
             let screen = NSScreen.main?.visibleFrame.size ?? NSSize(width: 1200, height: 800)
-            previewPanel?.setContentSize(count > 1
+            previewPanel?.setContentSize(isGrid
                 ? NSSize(width: min(860, screen.width - 60), height: min(640, screen.height - 80))
                 : NSSize(width: 380, height: 450))
         }
-        let pointer = NSEvent.mouseLocation
-        let screen = NSScreen.screens.first { $0.frame.contains(pointer) } ?? NSScreen.main
-        if let screen {
-            let frame = screen.visibleFrame
-            let size = previewPanel?.frame.size ?? NSSize(width: 340, height: 400)
-            previewPanel?.setFrameOrigin(NSPoint(x: frame.midX - size.width / 2,
-                                                 y: frame.midY - size.height / 2))
+        previewIsGrid = isGrid || (wasVisible && previewIsGrid)
+        if !wasVisible || expanding {
+            let pointer = NSEvent.mouseLocation
+            let screen = NSScreen.screens.first { $0.frame.contains(pointer) } ?? NSScreen.main
+            if let screen {
+                let frame = screen.visibleFrame
+                let size = previewPanel?.frame.size ?? NSSize(width: 340, height: 400)
+                previewPanel?.setFrameOrigin(NSPoint(x: frame.midX - size.width / 2,
+                                                     y: frame.midY - size.height / 2))
+            }
         }
-        previewPanel?.orderFrontRegardless()
+        if !wasVisible { previewPanel?.orderFrontRegardless() }
     }
 
     func windowWillClose(_ notification: Notification) {
@@ -130,17 +136,23 @@ struct BatchPhoto: Identifiable {
 }
 
 final class MacModel: ObservableObject {
+    struct PendingScreenshot: Identifiable {
+        let id: UUID
+        let thumbnail: NSImage
+    }
     let transport = NearbyTransport(role: .receiver, displayName: Host.current().localizedName ?? "My Mac")
     let inbox: URL
     private let photoStore: PhotoStore
     private var recentReceiptIDs: [String]
     private var latestClipboard: PhotoClipboard?
     private let receiveQueue = DispatchQueue(label: "local.snapbridge.receive", qos: .userInitiated)
+    private let detailQueue = DispatchQueue(label: "local.snapbridge.image-detail", qos: .userInitiated)
     private var batch = PhotoBatch()
     @Published private(set) var latestImage: NSImage?
-    @Published private(set) var screenshotPreview: NSImage?
-    private var screenshotPreviewID: UUID?
-    private var dismissedScreenshotID: UUID?
+    @Published private(set) var pendingScreenshots: [PendingScreenshot] = []
+    private var dismissedScreenshotIDs = Set<UUID>()
+    private var groupGeneration = 0
+    private var clipboardRefresh: DispatchWorkItem?
     @Published private(set) var latestURL: URL?
     @Published private(set) var receivedCount = 0
     @Published private(set) var copyStatus = "Copied — press ⌘V in your chat"
@@ -173,23 +185,28 @@ final class MacModel: ObservableObject {
     }
 
     fileprivate func showScreenshotPreview(id: UUID, data: Data, date: Date) {
-        guard id != screenshotPreviewID, id != dismissedScreenshotID else { return }
-        receiveQueue.async {
+        guard !pendingScreenshots.contains(where: { $0.id == id }), !dismissedScreenshotIDs.contains(id) else { return }
+        let generation = groupGeneration
+        receiveQueue.async { [self] in
             guard !self.photoStore.contains(id), !self.recentReceiptIDs.contains(id.uuidString),
                   let preview = try? PhotoProcessing.thumbnail(data, maxPixels: 720) else { return }
             let image = NSImage(cgImage: preview, size: NSSize(width: preview.width, height: preview.height))
-            DispatchQueue.main.async {
-                self.screenshotPreviewID = id
-                self.screenshotPreview = image
+            DispatchQueue.main.async { [self] in
+                guard self.groupGeneration == generation else {
+                    self.dismissedScreenshotIDs.insert(id)
+                    return
+                }
+                guard self.pendingScreenshots.count < PhotoStore.defaultLimit,
+                      !self.pendingScreenshots.contains(where: { $0.id == id }) else { return }
+                self.pendingScreenshots.append(PendingScreenshot(id: id, thumbnail: image))
                 self.onNewPhoto?()
                 let elapsed = Date().timeIntervalSince(date)
                 if elapsed >= 0 {
                     PerformanceTrace.record("screenshot_save_to_preview", id: id, since: PerformanceTrace.now() - elapsed)
                 }
-                DispatchQueue.main.asyncAfter(deadline: .now() + 15) { [weak self] in
-                    guard let self, self.screenshotPreviewID == id else { return }
-                    self.screenshotPreview = nil
-                    self.screenshotPreviewID = nil
+                DispatchQueue.main.asyncAfter(deadline: .now() + 60) { [weak self] in
+                    guard let self, self.groupGeneration == generation else { return }
+                    self.pendingScreenshots.removeAll { $0.id == id }
                 }
             }
         }
@@ -219,26 +236,29 @@ final class MacModel: ObservableObject {
                 UserDefaults.standard.set(self.recentReceiptIDs, forKey: "recentReceiptIDs")
                 PerformanceTrace.record("mac_validate_save_preview", id: id, since: start, bytes: data.count)
                 DispatchQueue.main.async {
-                    if self.screenshotPreviewID == id {
-                        self.screenshotPreview = nil
-                        self.screenshotPreviewID = nil
+                    let pending = self.pendingScreenshots.first { $0.id == id }
+                    if pending != nil { self.pendingScreenshots.removeAll { $0.id == id } }
+                    let dismissed = self.dismissedScreenshotIDs.remove(id) != nil
+                    self.receivedCount = retained.count
+                    if dismissed {
+                        let retainedIDs = Set(retained.map(\.id))
+                        self.batchPhotos.removeAll { !retainedIDs.contains($0.id) }
+                        completion(.success(()))
+                        return
                     }
                     self.latestClipboard = clipboard
                     self.latestImage = clipboard.preview
                     self.latestURL = self.photoStore.url(for: id)
-                    self.receivedCount = retained.count
                     self.batch.append(id, retained: Set(retained.map(\.id)))
                     self.batchPhotos.removeAll { !self.batch.ids.contains($0.id) }
-                    self.batchPhotos.append(BatchPhoto(id: id, url: self.photoStore.url(for: id), thumbnail: gridThumbnail))
-                    self.focusedPhotoID = nil
-                    self.focusedImage = nil
-                    self.launchError = nil
-                    self.copyLatest()
-                    if self.dismissedScreenshotID == id {
-                        self.dismissedScreenshotID = nil
-                    } else {
-                        self.onNewPhoto?()
+                    self.batchPhotos.append(BatchPhoto(id: id, url: self.photoStore.url(for: id),
+                                                       thumbnail: pending?.thumbnail ?? gridThumbnail))
+                    if let focused = self.focusedPhotoID, !self.batch.ids.contains(focused) {
+                        self.showGrid()
                     }
+                    self.launchError = nil
+                    self.updateClipboardAfterArrival()
+                    self.onNewPhoto?()
                     PerformanceTrace.record("mac_preview_scheduled", id: id, since: start, bytes: data.count)
                     if clipboard.originalType == .png {
                         let secondsSinceSave = Date().timeIntervalSince(date)
@@ -254,6 +274,8 @@ final class MacModel: ObservableObject {
     }
 
     func copyLatest() {
+        clipboardRefresh?.cancel()
+        clipboardRefresh = nil
         guard let latestClipboard else { return }
         let pasteboard = NSPasteboard.general
         if batchPhotos.count > 1 {
@@ -267,10 +289,22 @@ final class MacModel: ObservableObject {
         copyStatus = success ? "Copied — press ⌘V in your chat" : "Photo saved. Click Copy to try again."
     }
 
+    private func updateClipboardAfterArrival() {
+        if batchPhotos.count == 1 || pendingScreenshots.isEmpty {
+            copyLatest()
+            return
+        }
+        clipboardRefresh?.cancel()
+        let refresh = DispatchWorkItem { [weak self] in self?.copyLatest() }
+        clipboardRefresh = refresh
+        DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(90), execute: refresh)
+    }
+
     func closeBatch() {
-        dismissedScreenshotID = screenshotPreviewID
-        screenshotPreviewID = nil
-        screenshotPreview = nil
+        groupGeneration += 1
+        dismissedScreenshotIDs.formUnion(pendingScreenshots.map(\.id))
+        pendingScreenshots = []
+        if clipboardRefresh != nil { copyLatest() }
         batch.close()
         batchPhotos = []
         focusedPhotoID = nil
@@ -287,7 +321,7 @@ final class MacModel: ObservableObject {
     func enlarge(_ photo: BatchPhoto) {
         focusedPhotoID = photo.id
         focusedImage = nil
-        receiveQueue.async {
+        detailQueue.async {
             guard let data = try? Data(contentsOf: photo.url),
                   let image = try? PhotoProcessing.thumbnail(data, maxPixels: 2000) else { return }
             let preview = NSImage(cgImage: image, size: NSSize(width: image.width, height: image.height))
@@ -402,15 +436,28 @@ struct MacSetupView: View {
 }
 
 struct PhotoPreview: View {
+    private struct Tile: Identifiable {
+        let id: UUID
+        let image: NSImage
+        let photo: BatchPhoto?
+    }
+
     @ObservedObject var model: MacModel
     private let columns = [GridItem(.adaptive(minimum: 155, maximum: 240), spacing: 14)]
 
+    private var tiles: [Tile] {
+        let ready = model.batchPhotos.map { Tile(id: $0.id, image: $0.thumbnail, photo: $0) }
+        let readyIDs = Set(ready.map(\.id))
+        let incoming = model.pendingScreenshots.filter { !readyIDs.contains($0.id) }
+            .map { Tile(id: $0.id, image: $0.thumbnail, photo: nil) }
+        return Array((ready + incoming).suffix(PhotoStore.defaultLimit))
+    }
+
     var body: some View {
+        let items = tiles
+        let receiving = !model.pendingScreenshots.isEmpty
         VStack(spacing: 14) {
-            if let preview = model.screenshotPreview {
-                Image(nsImage: preview).resizable().scaledToFit()
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else if let focusedID = model.focusedPhotoID,
+            if let focusedID = model.focusedPhotoID,
                let photo = model.batchPhotos.first(where: { $0.id == focusedID }) {
                 HStack {
                     Button { model.showGrid() } label: { Label("All photos", systemImage: "square.grid.2x2") }
@@ -422,44 +469,34 @@ struct PhotoPreview: View {
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                         .onDrag { NSItemProvider(contentsOf: photo.url) ?? NSItemProvider() }
                 } else { ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity) }
-            } else if model.batchPhotos.count > 1 {
+            } else if items.count > 1 {
                 ScrollViewReader { reader in
                     ScrollView {
                         LazyVGrid(columns: columns, spacing: 14) {
-                            ForEach(Array(model.batchPhotos.enumerated()), id: \.element.id) { index, photo in
-                                Button { model.enlarge(photo) } label: {
-                                    VStack(spacing: 8) {
-                                        Image(nsImage: photo.thumbnail).resizable().scaledToFit()
-                                            .frame(maxWidth: .infinity).frame(height: 150)
-                                        Text("Photo \(index + 1)").font(.system(size: 11, weight: .medium))
-                                            .foregroundStyle(.secondary)
-                                    }.padding(10).frame(maxWidth: .infinity)
-                                        .background(.white.opacity(0.055), in: RoundedRectangle(cornerRadius: 12))
-                                }.buttonStyle(.plain).id(photo.id)
-                                    .accessibilityLabel("Open photo \(index + 1)")
-                                    .onDrag { NSItemProvider(contentsOf: photo.url) ?? NSItemProvider() }
-                                    .contextMenu {
-                                        Button("Copy this photo") { model.copyPhoto(photo) }
-                                        Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([photo.url]) }
-                                    }
+                            ForEach(Array(items.enumerated()), id: \.element.id) { index, tile in
+                                tileView(tile, number: index + 1).id(tile.id)
                             }
                         }.padding(2)
                     }
-                    .onChange(of: model.batchPhotos.last?.id) { _, id in
+                    .onChange(of: items.last?.id) { _, id in
                         if let id { reader.scrollTo(id, anchor: .bottom) }
                     }
                 }
+            } else if let incoming = items.first, incoming.photo == nil {
+                Image(nsImage: incoming.image).resizable().scaledToFit()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if let image = model.latestImage, let url = model.latestURL {
                 Image(nsImage: image).resizable().scaledToFit()
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .clipShape(RoundedRectangle(cornerRadius: 10))
                     .onDrag { NSItemProvider(contentsOf: url) ?? NSItemProvider() }
             }
-            Label(model.screenshotPreview == nil ? model.copyStatus : "Receiving original…",
-                  systemImage: model.screenshotPreview == nil ? "checkmark.circle.fill" : "arrow.down.circle")
+            Label(receiving ? "Receiving \(model.pendingScreenshots.count) original(s)…" : model.copyStatus,
+                  systemImage: receiving ? "arrow.down.circle" : "checkmark.circle.fill")
                 .font(.system(size: 12, weight: .medium)).foregroundStyle(bridgeGreen)
             HStack {
-                Button(model.batchPhotos.count > 1 ? "Copy all \(model.batchPhotos.count) photos" : "Copy photo") {
+                Button(receiving && !model.batchPhotos.isEmpty ? "Copy ready photos" :
+                       model.batchPhotos.count > 1 ? "Copy all \(model.batchPhotos.count) photos" : "Copy photo") {
                     model.copyLatest()
                 }.keyboardShortcut("c", modifiers: .command)
                 Spacer()
@@ -467,10 +504,33 @@ struct PhotoPreview: View {
                     let urls = model.batchPhotos.isEmpty ? [model.latestURL].compactMap { $0 } : model.batchPhotos.map(\.url)
                     NSWorkspace.shared.activateFileViewerSelecting(urls)
                 }
-            }.disabled(model.screenshotPreview != nil)
+            }.disabled(model.batchPhotos.isEmpty && receiving)
             Text("New shots join this group. Close this window to start a new one.")
                 .font(.system(size: 10)).foregroundStyle(.secondary)
         }.padding(16).frame(minWidth: 280, minHeight: 260)
             .preferredColorScheme(.dark)
+    }
+
+    @ViewBuilder
+    private func tileView(_ tile: Tile, number: Int) -> some View {
+        let label = VStack(spacing: 8) {
+            Image(nsImage: tile.image).resizable().scaledToFit()
+                .frame(maxWidth: .infinity).frame(height: 150)
+            Text(tile.photo == nil ? "Receiving…" : "Photo \(number)")
+                .font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary)
+        }.padding(10).frame(maxWidth: .infinity)
+            .background(.white.opacity(0.055), in: RoundedRectangle(cornerRadius: 12))
+        if let photo = tile.photo {
+            Button { model.enlarge(photo) } label: { label }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Open photo \(number)")
+                .onDrag { NSItemProvider(contentsOf: photo.url) ?? NSItemProvider() }
+                .contextMenu {
+                    Button("Copy this photo") { model.copyPhoto(photo) }
+                    Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([photo.url]) }
+                }
+        } else {
+            label
+        }
     }
 }

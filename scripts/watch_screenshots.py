@@ -112,6 +112,7 @@ class MediaConnection:
 
 def watch(lib, udid, since):
     seen = set()
+    previewed = set()
     initialized = set()
     mode = 2
     connection = None
@@ -188,28 +189,39 @@ def watch(lib, udid, since):
                     fresh.append((modified, path, size))
                 else:
                     seen.add(path)
-            for modified, path, size in sorted(fresh):
-                key = hashlib.sha256(udid + path + str(modified).encode()).digest()[:16]
-                shot_id = str(uuid.UUID(bytes=key))
+            fresh.sort()
+            if mode == 4:
+                for modified, path, size in fresh[:20]:
+                    key = (path, modified)
+                    if key not in previewed:
+                        preview = screenshot_preview(connection, path, size)
+                        if preview:
+                            send_frame(screenshot_id(udid, path, modified), modified, "Wi-Fi", preview, preview=True)
+                            previewed.add(key)
+            # Check for new arrivals between originals so a burst's thumbnails
+            # do not have to wait for every full-size file ahead of them.
+            sent_original = False
+            for modified, path, size in fresh:
+                shot_id = screenshot_id(udid, path, modified)
                 transport = "USB" if mode == 2 else "Wi-Fi"
-                if mode == 4:
-                    preview = screenshot_preview(connection, path, size)
-                    if preview:
-                        send_frame(shot_id, modified, transport, preview, preview=True)
                 started = time.monotonic()
                 data = connection.read(path, size)
                 if data is None or not data.endswith(b"IEND\xaeB\x60\x82"):
                     continue
                 seen.add(path)
+                previewed.discard((path, modified))
                 # iOS records this marker in the EXIF block. The receiver verifies it with ImageIO.
                 if b"Screenshot" not in data:
                     continue
                 active_folder = path.split(b"/")[1]
                 send_frame(shot_id, modified, transport, data,
                            read_ms=(time.monotonic() - started) * 1000)
+                sent_original = True
+                break
             heartbeat()
             delay = 1
-            time.sleep(0.12 if mode == 2 else 0.25)
+            if len(fresh) <= 1 or not sent_original:
+                time.sleep(0.12 if mode == 2 else 0.25)
         except MediaError:
             if connection is not None:
                 connection.close()
@@ -217,6 +229,11 @@ def watch(lib, udid, since):
             heartbeat()
             time.sleep(delay)
             delay = min(delay * 2, 8)
+
+
+def screenshot_id(udid, path, modified):
+    key = hashlib.sha256(udid + path + str(modified).encode()).digest()[:16]
+    return str(uuid.UUID(bytes=key))
 
 
 def screenshot_preview(connection, path, original_size):
