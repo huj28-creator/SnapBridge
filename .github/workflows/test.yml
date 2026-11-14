@@ -1,0 +1,23 @@
+name: Tests
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  swift:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run Swift package tests
+        run: swift test --package-path .
+      - name: Regenerate Xcode project
+        run: python3 scripts/generate_project.py
+      - name: Check generated project stays in sync
+        run: git diff --exit-code -- SnapBridge.xcodeproj Resources/Mac-Info.plist Resources/iPhone-Info.plist
+      - name: Test clipboard integration
+        run: python3 scripts/test_clipboard.py
+      - name: Test signing renewal safeguards
+        run: python3 scripts/test_renewal.py

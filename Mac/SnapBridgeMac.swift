@@ -18,28 +18,30 @@ final class MacDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var previewPanel: NSPanel?
     private var previewIsGrid = false
     private var screenshots: PhoneScreenshots?
+    private var screenshotSetup: ScreenshotImportSetup?
     private var subscriptions = Set<AnyCancellable>()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
         model = MacModel()
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
-        statusItem.button?.image = NSImage(systemSymbolName: "camera.badge.ellipsis", accessibilityDescription: "SnapBridge")
-        statusItem.button?.toolTip = "SnapBridge — iPhone photos, ready to paste"
+        statusItem.button?.image = NSImage(systemSymbolName: "camera.badge.ellipsis", accessibilityDescription: "ShotSkiff")
+        statusItem.button?.toolTip = "ShotSkiff — iPhone photos, ready to paste"
         let menu = NSMenu()
-        menu.addItem(withTitle: "SnapBridge", action: nil, keyEquivalent: "")
+        menu.addItem(withTitle: "ShotSkiff", action: nil, keyEquivalent: "")
         menu.addItem(.separator())
         addMenuItem("Pair iPhone / Settings…", action: #selector(showSetup), to: menu)
         addMenuItem("Show Latest Photo", action: #selector(showLatest), to: menu)
         addMenuItem("Open Received Photos", action: #selector(openInbox), to: menu)
+        addMenuItem("Check for Updates…", action: #selector(checkForUpdates), to: menu)
         menu.addItem(.separator())
-        addMenuItem("Quit SnapBridge", action: #selector(quit), to: menu, key: "q")
+        addMenuItem("Quit ShotSkiff", action: #selector(quit), to: menu, key: "q")
         statusItem.menu = menu
         model.onNewPhoto = { [weak self] in self?.showPreview() }
         model.transport.onPairingRequested = { [weak self] in self?.showSetup() }
         model.transport.$connected.sink { [weak self] connected in
             self?.statusItem.button?.image = NSImage(systemSymbolName: connected ? "camera.fill" : "camera.badge.ellipsis",
-                                                     accessibilityDescription: "SnapBridge")
+                                                     accessibilityDescription: "ShotSkiff")
         }.store(in: &subscriptions)
         model.transport.start()
         screenshots = PhoneScreenshots { [weak self] id, data, date in
@@ -48,7 +50,10 @@ final class MacDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         screenshots?.onPreview = { [weak self] id, data, date in
             self?.model.showScreenshotPreview(id: id, data: data, date: date)
         }
-        screenshots?.start()
+        if let screenshots {
+            screenshotSetup = ScreenshotImportSetup(watcher: screenshots)
+            if screenshotSetup?.isEnabled == true { screenshots.start() }
+        }
         if !model.transport.hasPairedPhone || CommandLine.arguments.contains("--pair") { showSetup() }
     }
 
@@ -63,9 +68,11 @@ final class MacDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if setupWindow == nil {
             let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 520, height: 680),
                                   styleMask: [.titled, .closable, .miniaturizable], backing: .buffered, defer: false)
-            window.title = "SnapBridge"
+            window.title = "ShotSkiff"
             window.isReleasedWhenClosed = false
-            window.contentView = NSHostingView(rootView: MacSetupView(model: model))
+            if let screenshotSetup {
+                window.contentView = NSHostingView(rootView: MacSetupView(model: model, screenshotSetup: screenshotSetup))
+            }
             window.center()
             setupWindow = window
         }
@@ -78,6 +85,37 @@ final class MacDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
     @objc func openInbox() { NSWorkspace.shared.open(model.inbox) }
     @objc func quit() { NSApp.terminate(nil) }
+
+    @objc func checkForUpdates() {
+        guard let url = URL(string: "https://api.github.com/repos/huj28-creator/SnapBridge/releases/latest") else { return }
+        var request = URLRequest(url: url)
+        request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
+        request.setValue("ShotSkiff/0.1.0", forHTTPHeaderField: "User-Agent")
+        URLSession.shared.dataTask(with: request) { data, _, error in
+            DispatchQueue.main.async {
+                if let error {
+                    let alert = NSAlert(); alert.messageText = "Update check failed"; alert.informativeText = error.localizedDescription
+                    alert.addButton(withTitle: "OK"); alert.runModal(); return
+                }
+                guard let data,
+                      let release = try? JSONDecoder().decode(GitHubRelease.self, from: data),
+                      let page = URL(string: release.htmlURL) else {
+                    let alert = NSAlert(); alert.messageText = "No public release found"; alert.informativeText = "Check the GitHub project page for release information."
+                    alert.addButton(withTitle: "OK"); alert.runModal(); return
+                }
+                let current = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.1.0"
+                let latest = release.tagName.trimmingCharacters(in: CharacterSet(charactersIn: "v"))
+                let alert = NSAlert()
+                alert.messageText = latest.compare(current, options: .numeric) == .orderedDescending
+                    ? "ShotSkiff \(latest) is available" : "ShotSkiff is up to date"
+                let notes = String(release.body.prefix(1800))
+                alert.informativeText = "Current version: \(current)\nLatest release: \(latest)\n\n\(notes.isEmpty ? "Release notes are on GitHub." : notes)\n\nUpdates open on GitHub for manual download and installation."
+                alert.addButton(withTitle: "View Release")
+                alert.addButton(withTitle: "Later")
+                if alert.runModal() == .alertFirstButtonReturn { NSWorkspace.shared.open(page) }
+            }
+        }.resume()
+    }
 
     func applicationWillTerminate(_ notification: Notification) {
         screenshots?.stop()
@@ -127,6 +165,13 @@ final class MacDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func windowWillClose(_ notification: Notification) {
         if let panel = notification.object as? NSPanel, panel === previewPanel { model.closeBatch() }
     }
+}
+
+private struct GitHubRelease: Decodable {
+    let tagName: String
+    let body: String
+    let htmlURL: String
+    enum CodingKeys: String, CodingKey { case tagName = "tag_name", body, htmlURL = "html_url" }
 }
 
 struct BatchPhoto: Identifiable {
@@ -356,22 +401,105 @@ private let bridgeGreen = Color(red: 0.35, green: 0.91, blue: 0.63)
 
 struct MacSetupView: View {
     @ObservedObject var model: MacModel
+    @ObservedObject var screenshotSetup: ScreenshotImportSetup
     @ObservedObject var transport: NearbyTransport
     @State private var launchAtLogin = SMAppService.mainApp.status == .enabled
     @State private var confirmReset = false
+    @State private var workflow = "screenshots"
 
-    init(model: MacModel) { self.model = model; transport = model.transport }
+    init(model: MacModel, screenshotSetup: ScreenshotImportSetup) {
+        self.model = model
+        self.screenshotSetup = screenshotSetup
+        transport = model.transport
+        _workflow = State(initialValue: model.transport.hasPairedPhone ? "camera" : "screenshots")
+    }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 23) {
+        ScrollView {
+          VStack(alignment: .leading, spacing: 20) {
             HStack(spacing: 14) {
-                Image(systemName: "camera.aperture").font(.system(size: 40, weight: .medium)).foregroundStyle(bridgeGreen)
+                Image(systemName: "arrow.up.right.square").font(.system(size: 40, weight: .medium)).foregroundStyle(bridgeGreen)
                 VStack(alignment: .leading, spacing: 3) {
-                    Text("SnapBridge").font(.system(size: 29, weight: .semibold, design: .rounded))
-                    Text("From your phone. Ready to paste.").foregroundStyle(.secondary)
+                    Text("ShotSkiff").font(.system(size: 29, weight: .semibold, design: .rounded))
+                    Text("From your iPhone. Straight to your Mac.").foregroundStyle(.secondary)
                 }
                 Spacer()
             }
+            Text("CHOOSE YOUR WORKFLOW")
+                .font(.system(size: 11, weight: .bold)).tracking(1.6).foregroundStyle(.secondary)
+            Picker("Workflow", selection: $workflow) {
+                Text("Automatic Screenshots").tag("screenshots")
+                Text("Camera + Screenshots").tag("camera")
+            }
+            .pickerStyle(.segmented)
+
+            if workflow == "screenshots" { screenshotWorkflow } else { cameraWorkflow }
+          }
+          .padding(28)
+        }
+        .frame(width: 540, height: 690)
+        .background(Color(red: 0.075, green: 0.095, blue: 0.09))
+        .preferredColorScheme(.dark)
+        .alert("Reset paired phones?", isPresented: $confirmReset) {
+            Button("Cancel", role: .cancel) {}
+            Button("Reset pairing", role: .destructive) { transport.resetPairing() }
+        } message: { Text("Phones will need to enter a new code before they can send photos again. Saved photos are kept.") }
+    }
+
+    private var screenshotWorkflow: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Use your iPhone’s regular screenshot buttons. No ShotSkiff app is required on the phone.")
+                .font(.system(size: 15, weight: .medium)).fixedSize(horizontal: false, vertical: true)
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(spacing: 10) {
+                    Image(systemName: screenshotSetup.isEnabled ? "checkmark.circle.fill" : "iphone.gen3.radiowaves.left.and.right")
+                        .foregroundStyle(screenshotSetup.isEnabled ? bridgeGreen : .secondary)
+                    Text(screenshotSetup.isEnabled ? "Screenshot importing is on" : "Connect and trust your iPhone")
+                        .font(.system(size: 15, weight: .semibold))
+                }
+                Text("Connect by USB the first time, unlock your iPhone, and tap Trust This Computer. If already trusted, a reachable Apple Wi-Fi device connection can also work.")
+                    .font(.system(size: 12)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                if screenshotSetup.phones.isEmpty {
+                    Label("No trusted iPhone found yet", systemImage: "exclamationmark.circle")
+                        .font(.system(size: 12, weight: .medium)).foregroundStyle(.orange)
+                } else {
+                    Picker("iPhone", selection: $screenshotSetup.selectedPhoneID) {
+                        Text("Choose an iPhone…").tag("")
+                        ForEach(screenshotSetup.phones) { phone in Text(phone.name).tag(phone.id) }
+                    }
+                    .disabled(screenshotSetup.isEnabled)
+                }
+                HStack {
+                    Button("Refresh iPhones") { screenshotSetup.scan(); screenshotSetup.refreshDependencies() }
+                    Spacer()
+                    if screenshotSetup.dependencyAvailable {
+                        if screenshotSetup.isEnabled {
+                            Button("Pause importing") { screenshotSetup.disable() }
+                        } else {
+                            Button("Enable importing") { screenshotSetup.enable() }
+                                .buttonStyle(.borderedProminent)
+                                .disabled(screenshotSetup.selectedPhoneID.isEmpty)
+                        }
+                    } else {
+                        Button("Install screenshot support…") { screenshotSetup.installDependency() }
+                    }
+                }
+                Text(screenshotSetup.dependencyMessage).font(.system(size: 11)).foregroundStyle(.secondary)
+                Text(screenshotSetup.status).font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(screenshotSetup.isEnabled ? bridgeGreen : .secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(18).frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color.white.opacity(0.05), in: RoundedRectangle(cornerRadius: 16))
+            Text("Take a screenshot with the usual side button + volume-up buttons. New images appear in the floating Mac preview, ready to paste or drag. Existing library photos are skipped.")
+                .font(.system(size: 12)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            Text("Images stay on your devices. The Mac keeps at most 20 and permanently deletes the oldest when the limit is reached. Every received image replaces the clipboard.")
+                .font(.system(size: 11)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private var cameraWorkflow: some View {
+        VStack(alignment: .leading, spacing: 18) {
             HStack(spacing: 8) {
                 Circle().fill(transport.connected ? bridgeGreen : .orange).frame(width: 7, height: 7)
                 Text(transport.status).font(.system(size: 13, weight: .medium))
@@ -388,7 +516,7 @@ struct MacSetupView: View {
                     Text(transport.pairingCode).font(.system(size: 48, weight: .medium, design: .monospaced)).tracking(9)
                     .textSelection(.enabled)
                     .accessibilityLabel("Pairing code \(transport.pairingCode)")
-                    Text("Open SnapBridge on your iPhone, choose this Mac, and enter this code once. They’ll remember each other.")
+                    Text("Open ShotSkiff on your iPhone, choose this Mac, and enter this code once. They’ll remember each other.")
                         .font(.system(size: 14)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 }
             }
@@ -403,23 +531,16 @@ struct MacSetupView: View {
                 Text(error).font(.footnote).foregroundStyle(.orange).textSelection(.enabled)
             }
             Divider()
-            Toggle("Start SnapBridge when I log in", isOn: $launchAtLogin)
+            Toggle("Start ShotSkiff when I log in", isOn: $launchAtLogin)
                 .onChange(of: launchAtLogin) { _, enabled in model.setLaunchAtLogin(enabled) }
             HStack {
                 Button("Open received photos") { NSWorkspace.shared.open(model.inbox) }
                 Spacer()
                 Button("Change paired iPhone…") { confirmReset = true }.foregroundStyle(.secondary)
             }
-            Text("\(model.receivedCount)/20 photos saved · Oldest photos deleted automatically")
+            Text("\(model.receivedCount)/20 photos saved · Oldest deleted automatically")
                 .font(.system(size: 11)).foregroundStyle(.secondary)
         }
-        .padding(30).frame(width: 520)
-        .background(Color(red: 0.075, green: 0.095, blue: 0.09))
-        .preferredColorScheme(.dark)
-        .alert("Reset paired phones?", isPresented: $confirmReset) {
-            Button("Cancel", role: .cancel) {}
-            Button("Reset pairing", role: .destructive) { transport.resetPairing() }
-        } message: { Text("Phones will need to enter a new code before they can send photos again. Saved photos are kept.") }
     }
 
     private func instruction(_ number: String, _ title: String, _ detail: String) -> some View {

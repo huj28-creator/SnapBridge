@@ -1,0 +1,35 @@
+1
+00:00:00,050 --> 00:00:02,950
+Take a photo on iPhone. Use it on your Mac.
+
+2
+00:00:03,300 --> 00:00:04,500
+Open the camera; a Mac preview appears.
+
+3
+00:00:04,670 --> 00:00:06,350
+Paste into notes, documents, or a chat.
+
+4
+00:00:06,600 --> 00:00:10,450
+Several shots join one group. Copy or drag them.
+
+5
+00:00:10,750 --> 00:00:12,750
+Take a math problem into your study notes.
+
+6
+00:00:12,950 --> 00:00:15,950
+Add lab or engineering photos to a report.
+
+7
+00:00:16,300 --> 00:00:19,950
+Ask about a problem from the real photo.
+
+8
+00:00:20,300 --> 00:00:24,300
+Bring wiring and site photos into the report.
+
+9
+00:00:24,700 --> 00:00:28,600
+Free and open source. Setup notes on GitHub.

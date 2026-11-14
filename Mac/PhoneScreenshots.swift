@@ -15,7 +15,7 @@ final class PhoneScreenshots {
     private let receive: (UUID, Data, Date) -> Void
     var onPreview: ((UUID, Data, Date) -> Void)?
     private let queue = DispatchQueue(label: "local.snapbridge.screenshots", qos: .utility)
-    private let since = UInt64(Date().timeIntervalSince1970 * 1_000_000_000)
+    private var since: UInt64 = 0
     private var process: Process?
     private var pipe: Pipe?
     private var buffer = Data()
@@ -32,6 +32,7 @@ final class PhoneScreenshots {
         queue.async {
             guard !self.running else { return }
             self.running = true
+            self.since = UInt64(Date().timeIntervalSince1970 * 1_000_000_000)
             self.launch()
         }
     }

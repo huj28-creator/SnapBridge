@@ -267,7 +267,7 @@ final class PhoneModel: ObservableObject {
         let image = UIGraphicsImageRenderer(size: CGSize(width: 1200, height: 1500)).image { context in
             UIColor(red: 0.04, green: 0.12, blue: 0.09, alpha: 1).setFill()
             context.fill(CGRect(x: 0, y: 0, width: 1200, height: 1500))
-            let text = "SnapBridge\n\nTransfer test\n\nPhone → Mac\nReady to paste."
+            let text = "ShotSkiff\n\nTransfer test\n\nPhone → Mac\nReady to paste."
             (text as NSString).draw(in: CGRect(x: 100, y: 200, width: 1000, height: 1100), withAttributes: [
                 .font: UIFont.systemFont(ofSize: 78, weight: .semibold),
                 .foregroundColor: UIColor(red: 0.35, green: 0.91, blue: 0.63, alpha: 1)

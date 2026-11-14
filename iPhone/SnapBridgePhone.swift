@@ -53,7 +53,7 @@ struct PhoneCameraView: View {
         HStack {
             HStack(spacing: 9) {
                 Image(systemName: "camera.aperture").foregroundStyle(phoneGreen)
-                Text("SnapBridge").font(.system(size: compact ? 18 : 22, weight: .semibold, design: .rounded))
+                Text("ShotSkiff").font(.system(size: compact ? 18 : 22, weight: .semibold, design: .rounded))
             }
             Spacer()
             Button { showPairing = true } label: {
@@ -73,7 +73,7 @@ struct PhoneCameraView: View {
                     Image(systemName: "camera").font(.system(size: 42)).foregroundStyle(phoneGreen)
                     if camera.permissionDenied {
                         Text("Allow camera access").font(.headline)
-                        Text("Open Settings to let SnapBridge take photos.").foregroundStyle(.secondary)
+                        Text("Open Settings to let ShotSkiff take photos.").foregroundStyle(.secondary)
                         Button("Open Settings") { openSettings() }.buttonStyle(.borderedProminent).tint(phoneGreen)
                     } else {
                         Text(camera.error ?? "Opening camera…").multilineTextAlignment(.center).foregroundStyle(.secondary)
@@ -158,12 +158,12 @@ struct PairMacView: View {
                         .padding(.top, 16)
                     VStack(alignment: .leading, spacing: 8) {
                         Text(transport.connected ? "You’re connected" : transport.pairing != nil ? "Your saved Mac" : "Meet your Mac").font(.system(size: 32, weight: .semibold, design: .rounded))
-                        Text("Open SnapBridge on your Mac. Allow Local Network access on both devices, and keep Wi-Fi and Bluetooth on.")
+                        Text("Open ShotSkiff on your Mac. Allow Local Network access on both devices, and keep Wi-Fi and Bluetooth on.")
                             .foregroundStyle(.secondary)
                     }
                     if let pairing = transport.pairing {
                         Label(pairing.receiverName, systemImage: "checkmark.shield.fill").foregroundStyle(phoneGreen)
-                        Text("Photos always go to this Mac. SnapBridge reconnects automatically, and remembers it until you choose Change paired Mac.")
+                        Text("Photos always go to this Mac. ShotSkiff reconnects automatically, and remembers it until you choose Change paired Mac.")
                             .foregroundStyle(.secondary)
                         Text(transport.status).font(.footnote).foregroundStyle(.secondary)
                         if transport.connected {
@@ -207,7 +207,7 @@ struct PairMacView: View {
                         Divider()
                         Button("Change paired Mac…", role: .destructive) { confirmForget = true }
                     }
-                    Text("Photos send while SnapBridge is open. Undelivered photos stay queued on your iPhone.")
+                    Text("Photos send while ShotSkiff is open. Undelivered photos stay queued on your iPhone.")
                         .font(.footnote).foregroundStyle(.secondary)
                 }.padding(28)
             }.background(Color(white: 0.06))

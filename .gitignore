@@ -1,25 +1,10 @@
-# Personal signing and credentials
-Local.xcconfig
-*.mobileprovision
-*.p12
-*.p8
-*.cer
-.env
-.env.*
-
-# Build products, Xcode user state, and local photo/diagnostic data
-.build/
-.swiftpm/
 build/
+dist/
+.build/
+Local.xcconfig
 DerivedData/
-*.app/
-*.ipa
-*.dSYM/
-xcuserdata/
-*.xcuserstate
+*.xcarchive
+*.dSYM
 .DS_Store
 __pycache__/
-Performance.json
-Connection.json
-Inbox/
-Outbox/
+*.pyc

@@ -5,7 +5,7 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>en</string>
 	<key>CFBundleDisplayName</key>
-	<string>SnapBridge</string>
+	<string>ShotSkiff</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -30,7 +30,7 @@
 	<key>NSCameraUsageDescription</key>
 	<string>Take a photo and send it straight to your paired Mac, ready to paste into a chat.</string>
 	<key>NSLocalNetworkUsageDescription</key>
-	<string>SnapBridge connects to your saved device and transfers the photos you take directly to your Mac.</string>
+	<string>ShotSkiff connects to your saved device and transfers the photos you take directly to your Mac.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

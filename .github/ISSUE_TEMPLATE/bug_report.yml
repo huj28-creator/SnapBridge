@@ -1,0 +1,30 @@
+name: Bug report
+description: Report a reproducible issue
+body:
+  - type: markdown
+    attributes:
+      value: Please do not attach personal photos, device identifiers, pairing codes, or signing logs containing account data.
+  - type: input
+    id: version
+    attributes:
+      label: ShotFerry version
+    validations:
+      required: true
+  - type: input
+    id: macos
+    attributes:
+      label: macOS version and Mac type
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce and what happened
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true

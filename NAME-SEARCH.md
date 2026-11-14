@@ -1,0 +1,7 @@
+# Public product name check — November 2026
+
+The planned name **ShotFerry** was changed before release. A web search surfaced **Footage Ferry**, a Mac/iPhone media-transfer product, in a closely related use case. The shared “Ferry” naming and phone-to-Mac media function create avoidable marketplace confusion. See [the Footage Ferry description](https://flaviocopes.com/apps/tutorials/free-up-iphone-storage-after-blackmagic-camera-shoot/).
+
+The replacement public name is **ShotSkiff**. Exact-phrase searches for “ShotSkiff” across general web results, GitHub, and App Store indexed pages returned no matching app/product listing during this check. This is a preliminary availability screen, not legal clearance. The live USPTO and WIPO trademark databases should be searched by a rights professional before a commercial trademark filing or major paid campaign; search-engine indexing is incomplete, jurisdictions differ, and no search guarantees availability. [USPTO search](https://tmsearch.uspto.gov/search/) · [WIPO Global Brand Database](https://www.wipo.int/en/web/global-brand-database/index).
+
+The repository URL remains `huj28-creator/SnapBridge` to keep historical links and GitHub redirects stable. The application's internal bundle identifiers, Keychain service, local support folder, and Bonjour discovery names also remain unchanged to preserve existing data and pairing compatibility.

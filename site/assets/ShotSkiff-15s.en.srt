@@ -1,0 +1,23 @@
+1
+00:00:00,050 --> 00:00:02,750
+Take a photo on iPhone. It lands on your Mac.
+
+2
+00:00:03,120 --> 00:00:06,050
+A preview pops up on your Mac.
+
+3
+00:00:06,000 --> 00:00:06,750
+Paste it into your notes or chat.
+
+4
+00:00:06,950 --> 00:00:08,950
+Several shots stay together in one group.
+
+5
+00:00:09,400 --> 00:00:10,300
+Free and open source.
+
+6
+00:00:10,350 --> 00:00:13,000
+Get the app and setup guide on GitHub.

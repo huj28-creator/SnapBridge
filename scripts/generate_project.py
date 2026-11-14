@@ -19,11 +19,11 @@ common_info = {
     "CFBundleIdentifier": "$(PRODUCT_BUNDLE_IDENTIFIER)",
     "CFBundleInfoDictionaryVersion": "6.0",
     "CFBundleName": "$(PRODUCT_NAME)",
-    "CFBundleDisplayName": "SnapBridge",
+    "CFBundleDisplayName": "ShotSkiff",
     "CFBundlePackageType": "APPL",
     "CFBundleShortVersionString": "$(MARKETING_VERSION)",
     "CFBundleVersion": "$(CURRENT_PROJECT_VERSION)",
-    "NSLocalNetworkUsageDescription": "SnapBridge connects to your saved device and transfers the photos you take directly to your Mac.",
+    "NSLocalNetworkUsageDescription": "ShotSkiff connects to your saved device and transfers the photos you take directly to your Mac.",
     "NSBonjourServices": ["_snapbridge-v1._tcp", "_snapbridge-v1._udp"],
 }
 write_plist("Resources/Mac-Info.plist", dict(common_info, **{
@@ -48,7 +48,7 @@ def obj(key, value):
     return uid(key)
 
 shared = ["Shared/WireProtocol.swift", "Shared/KeychainStore.swift", "Shared/NearbyTransport.swift", "Shared/PhotoProcessing.swift", "Shared/PerformanceTrace.swift", "Shared/FastPhotoChannel.swift"]
-mac = ["Mac/SnapBridgeMac.swift", "Mac/PhoneScreenshots.swift", "Shared/PhotoStore.swift", "Mac/PhotoClipboard.swift", "Shared/PhotoBatch.swift"]
+mac = ["Mac/SnapBridgeMac.swift", "Mac/PhoneScreenshots.swift", "Mac/ScreenshotImportSetup.swift", "Shared/PhotoStore.swift", "Mac/PhotoClipboard.swift", "Shared/PhotoBatch.swift"]
 phone = ["iPhone/SnapBridgePhone.swift", "iPhone/CameraController.swift", "iPhone/PhoneModel.swift"]
 files = shared + mac + phone + ["Resources/Mac-Info.plist", "Resources/iPhone-Info.plist",
                                "Resources/SnapBridgeIcon.icns", "Resources/Assets.xcassets", "Resources/Signing.xcconfig", "scripts/watch_screenshots.py"]
@@ -76,7 +76,7 @@ for target, product, sources, resources, sdk in targets:
             "SWIFT_VERSION": "5.0",
             "SWIFT_STRICT_CONCURRENCY": "minimal",
             "CURRENT_PROJECT_VERSION": "8" if sdk == "macosx" else "7",
-            "MARKETING_VERSION": "0.5.0",
+            "MARKETING_VERSION": "0.1.0",
             "ENABLE_APP_SANDBOX": "NO",
             "ENABLE_HARDENED_RUNTIME": "YES" if sdk == "macosx" else "NO",
             "SWIFT_OPTIMIZATION_LEVEL": "-Onone" if config == "Debug" else "-O",

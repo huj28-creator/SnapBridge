@@ -39,7 +39,7 @@ final class CameraController: NSObject, ObservableObject, AVCapturePhotoCaptureD
                 self.capturing = false
                 let error = notification.userInfo?[AVCaptureSessionErrorKey] as? AVError
                 if error?.code == .mediaServicesWereReset { self.start() }
-                else { self.error = error?.localizedDescription ?? "The camera stopped. Reopen SnapBridge to retry." }
+                else { self.error = error?.localizedDescription ?? "The camera stopped. Reopen ShotSkiff to retry." }
             })
         notificationTokens.append(NotificationCenter.default.addObserver(
             forName: .AVCaptureSessionWasInterrupted, object: session, queue: .main) { [weak self] _ in
