@@ -17,7 +17,7 @@ Validation performed on 2026-11-14 on Apple Silicon macOS with Xcode 27.2.
 - No iPhone was attached during this release pass, so fresh-device onboarding, screenshot import over USB/Wi-Fi, iPhone camera install/capture, renewal on a connected phone, and phone permission-denial flows were not retested on hardware. Earlier development-session reports said camera, landscape, connection recovery, screenshot flow, and grouped paste worked on the owner's devices; those are historical reports, not tests from this release pass.
 - No Intel Mac was available; this release is Apple Silicon only.
 - A clean macOS user-account first launch and download from the published GitHub release can only be checked after publication. Ad-hoc signature warnings are expected; notarization requires paid Apple Developer Program access and is not claimed.
-- GitHub Pages deployed successfully. The first CI workflow was canceled before any test steps because its `macos-14` image had been retired by GitHub; the workflow now targets `macos-15` and needs a successful rerun before CI can be considered verified.
+- GitHub Pages deployed successfully. The first CI workflow was canceled before any test steps because its `macos-14` image had been retired by GitHub. After updating to `macos-15`, GitHub Actions passed the Swift package suite, regenerated-project consistency check, clipboard integration test, and signing-renewal safeguards on commit `0981ba1`.
 
 ## Release caveats
 
