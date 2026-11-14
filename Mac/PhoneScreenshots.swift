@@ -9,9 +9,11 @@ final class PhoneScreenshots {
         let size: Int
         let readMilliseconds: Double
         let transport: String
+        let preview: Bool
     }
 
     private let receive: (UUID, Data, Date) -> Void
+    var onPreview: ((UUID, Data, Date) -> Void)?
     private let queue = DispatchQueue(label: "local.snapbridge.screenshots", qos: .utility)
     private let since = UInt64(Date().timeIntervalSince1970 * 1_000_000_000)
     private var process: Process?
@@ -129,6 +131,12 @@ final class PhoneScreenshots {
             let image = Data(buffer[consumed..<consumed + shot.size])
             consumed += shot.size
             nextImage = nil
+            if shot.preview {
+                guard image.count <= 512 * 1024, image.starts(with: [0xff, 0xd8, 0xff]) else { continue }
+                let callback = onPreview
+                DispatchQueue.main.async { callback?(shot.id, image, Date(timeIntervalSince1970: shot.date)) }
+                continue
+            }
             guard let source = try? PhotoProcessing.source(image),
                   let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as NSDictionary?,
                   let exif = properties[kCGImagePropertyExifDictionary] as? NSDictionary,

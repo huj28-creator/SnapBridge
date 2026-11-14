@@ -44,6 +44,9 @@ final class MacDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         screenshots = PhoneScreenshots { [weak self] id, data, date in
             self?.model.receive(id: id, data: data, date: date) { _ in }
         }
+        screenshots?.onPreview = { [weak self] id, data, date in
+            self?.model.showScreenshotPreview(id: id, data: data, date: date)
+        }
         screenshots?.start()
         if !model.transport.hasPairedPhone || CommandLine.arguments.contains("--pair") { showSetup() }
     }
@@ -135,6 +138,9 @@ final class MacModel: ObservableObject {
     private let receiveQueue = DispatchQueue(label: "local.snapbridge.receive", qos: .userInitiated)
     private var batch = PhotoBatch()
     @Published private(set) var latestImage: NSImage?
+    @Published private(set) var screenshotPreview: NSImage?
+    private var screenshotPreviewID: UUID?
+    private var dismissedScreenshotID: UUID?
     @Published private(set) var latestURL: URL?
     @Published private(set) var receivedCount = 0
     @Published private(set) var copyStatus = "Copied — press ⌘V in your chat"
@@ -166,6 +172,29 @@ final class MacModel: ObservableObject {
         }
     }
 
+    fileprivate func showScreenshotPreview(id: UUID, data: Data, date: Date) {
+        guard id != screenshotPreviewID, id != dismissedScreenshotID else { return }
+        receiveQueue.async {
+            guard !self.photoStore.contains(id), !self.recentReceiptIDs.contains(id.uuidString),
+                  let preview = try? PhotoProcessing.thumbnail(data, maxPixels: 720) else { return }
+            let image = NSImage(cgImage: preview, size: NSSize(width: preview.width, height: preview.height))
+            DispatchQueue.main.async {
+                self.screenshotPreviewID = id
+                self.screenshotPreview = image
+                self.onNewPhoto?()
+                let elapsed = Date().timeIntervalSince(date)
+                if elapsed >= 0 {
+                    PerformanceTrace.record("screenshot_save_to_preview", id: id, since: PerformanceTrace.now() - elapsed)
+                }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 15) { [weak self] in
+                    guard let self, self.screenshotPreviewID == id else { return }
+                    self.screenshotPreview = nil
+                    self.screenshotPreviewID = nil
+                }
+            }
+        }
+    }
+
     fileprivate func receive(id: UUID, data: Data, date: Date, completion: @escaping (Result<Void, Error>) -> Void) {
         let start = PerformanceTrace.now()
         receiveQueue.async {
@@ -190,6 +219,10 @@ final class MacModel: ObservableObject {
                 UserDefaults.standard.set(self.recentReceiptIDs, forKey: "recentReceiptIDs")
                 PerformanceTrace.record("mac_validate_save_preview", id: id, since: start, bytes: data.count)
                 DispatchQueue.main.async {
+                    if self.screenshotPreviewID == id {
+                        self.screenshotPreview = nil
+                        self.screenshotPreviewID = nil
+                    }
                     self.latestClipboard = clipboard
                     self.latestImage = clipboard.preview
                     self.latestURL = self.photoStore.url(for: id)
@@ -201,7 +234,11 @@ final class MacModel: ObservableObject {
                     self.focusedImage = nil
                     self.launchError = nil
                     self.copyLatest()
-                    self.onNewPhoto?()
+                    if self.dismissedScreenshotID == id {
+                        self.dismissedScreenshotID = nil
+                    } else {
+                        self.onNewPhoto?()
+                    }
                     PerformanceTrace.record("mac_preview_scheduled", id: id, since: start, bytes: data.count)
                     if clipboard.originalType == .png {
                         let secondsSinceSave = Date().timeIntervalSince(date)
@@ -231,6 +268,9 @@ final class MacModel: ObservableObject {
     }
 
     func closeBatch() {
+        dismissedScreenshotID = screenshotPreviewID
+        screenshotPreviewID = nil
+        screenshotPreview = nil
         batch.close()
         batchPhotos = []
         focusedPhotoID = nil
@@ -367,7 +407,10 @@ struct PhotoPreview: View {
 
     var body: some View {
         VStack(spacing: 14) {
-            if let focusedID = model.focusedPhotoID,
+            if let preview = model.screenshotPreview {
+                Image(nsImage: preview).resizable().scaledToFit()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if let focusedID = model.focusedPhotoID,
                let photo = model.batchPhotos.first(where: { $0.id == focusedID }) {
                 HStack {
                     Button { model.showGrid() } label: { Label("All photos", systemImage: "square.grid.2x2") }
@@ -412,7 +455,8 @@ struct PhotoPreview: View {
                     .clipShape(RoundedRectangle(cornerRadius: 10))
                     .onDrag { NSItemProvider(contentsOf: url) ?? NSItemProvider() }
             }
-            Label(model.copyStatus, systemImage: "checkmark.circle.fill")
+            Label(model.screenshotPreview == nil ? model.copyStatus : "Receiving original…",
+                  systemImage: model.screenshotPreview == nil ? "checkmark.circle.fill" : "arrow.down.circle")
                 .font(.system(size: 12, weight: .medium)).foregroundStyle(bridgeGreen)
             HStack {
                 Button(model.batchPhotos.count > 1 ? "Copy all \(model.batchPhotos.count) photos" : "Copy photo") {
@@ -423,7 +467,7 @@ struct PhotoPreview: View {
                     let urls = model.batchPhotos.isEmpty ? [model.latestURL].compactMap { $0 } : model.batchPhotos.map(\.url)
                     NSWorkspace.shared.activateFileViewerSelecting(urls)
                 }
-            }
+            }.disabled(model.screenshotPreview != nil)
             Text("New shots join this group. Close this window to start a new one.")
                 .font(.system(size: 10)).foregroundStyle(.secondary)
         }.padding(16).frame(minWidth: 280, minHeight: 260)

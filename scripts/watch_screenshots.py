@@ -11,6 +11,7 @@ import uuid
 POINTER = c.c_void_p
 STRINGS = c.POINTER(c.c_char_p)
 MAX_BYTES = 16 * 1024 * 1024
+MAX_PREVIEW_BYTES = 512 * 1024
 MISSING = 8
 
 
@@ -188,6 +189,13 @@ def watch(lib, udid, since):
                 else:
                     seen.add(path)
             for modified, path, size in sorted(fresh):
+                key = hashlib.sha256(udid + path + str(modified).encode()).digest()[:16]
+                shot_id = str(uuid.UUID(bytes=key))
+                transport = "USB" if mode == 2 else "Wi-Fi"
+                if mode == 4:
+                    preview = screenshot_preview(connection, path, size)
+                    if preview:
+                        send_frame(shot_id, modified, transport, preview, preview=True)
                 started = time.monotonic()
                 data = connection.read(path, size)
                 if data is None or not data.endswith(b"IEND\xaeB\x60\x82"):
@@ -197,20 +205,11 @@ def watch(lib, udid, since):
                 if b"Screenshot" not in data:
                     continue
                 active_folder = path.split(b"/")[1]
-                key = hashlib.sha256(udid + path + str(modified).encode()).digest()[:16]
-                header = json.dumps({
-                    "id": str(uuid.UUID(bytes=key)),
-                    "date": modified / 1_000_000_000,
-                    "size": len(data),
-                    "readMilliseconds": (time.monotonic() - started) * 1000,
-                    "transport": "USB" if mode == 2 else "Wi-Fi",
-                }).encode("ascii")
-                sys.stdout.buffer.write(struct.pack(">I", len(header)) + header)
-                sys.stdout.buffer.write(data)
-                sys.stdout.buffer.flush()
+                send_frame(shot_id, modified, transport, data,
+                           read_ms=(time.monotonic() - started) * 1000)
             heartbeat()
             delay = 1
-            time.sleep(0.12 if mode == 2 else 0.40)
+            time.sleep(0.12 if mode == 2 else 0.25)
         except MediaError:
             if connection is not None:
                 connection.close()
@@ -218,6 +217,48 @@ def watch(lib, udid, since):
             heartbeat()
             time.sleep(delay)
             delay = min(delay * 2, 8)
+
+
+def screenshot_preview(connection, path, original_size):
+    # iOS may create a thumbnail after the original becomes visible. Fall through
+    # to the original immediately if the thumbnail has not appeared.
+    try:
+        prefix = connection.read(path, min(4096, original_size))
+        if not prefix or not prefix.startswith(b"\x89PNG\r\n\x1a\n"):
+            return None
+        offset = 8
+        while offset + 12 <= len(prefix):
+            length, kind = struct.unpack_from(">I4s", prefix, offset)
+            end = offset + 12 + length
+            if end > len(prefix):
+                return None
+            if kind == b"eXIf" and b"Screenshot" in prefix[offset + 8:end - 4]:
+                thumbnail = b"PhotoData/Thumbnails/V2/" + path + b"/5005.JPG"
+                size = int(connection.info(thumbnail).get(b"st_size", b"0"))
+                if 0 < size <= MAX_PREVIEW_BYTES:
+                    data = connection.read(thumbnail, size)
+                    if data and data.startswith(b"\xff\xd8\xff") and data.endswith(b"\xff\xd9"):
+                        return data
+                return None
+            offset = end
+    except MediaError as error:
+        if error.args != (MISSING,):
+            raise
+    return None
+
+
+def send_frame(shot_id, modified, transport, data, *, preview=False, read_ms=0):
+    header = json.dumps({
+        "id": shot_id,
+        "date": modified / 1_000_000_000,
+        "size": len(data),
+        "readMilliseconds": read_ms,
+        "transport": transport,
+        "preview": preview,
+    }).encode("ascii")
+    sys.stdout.buffer.write(struct.pack(">I", len(header)) + header)
+    sys.stdout.buffer.write(data)
+    sys.stdout.buffer.flush()
 
 
 def heartbeat():
