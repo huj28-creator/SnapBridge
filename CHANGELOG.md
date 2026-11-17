@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## ShotSkiff v0.1.1
 
 - Starting screenshot import registers ShotSkiff to launch at Mac login. The receiver also refreshes macOS's trusted-device Wi-Fi discovery during reconnect recovery.
 
