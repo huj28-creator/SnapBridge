@@ -4,6 +4,7 @@ import Combine
 import ServiceManagement
 import UniformTypeIdentifiers
 import ImageIO
+import CryptoKit
 
 @main
 struct SnapBridgeMacApp: App {
@@ -189,6 +190,7 @@ final class MacModel: ObservableObject {
     let inbox: URL
     private let photoStore: PhotoStore
     private var recentReceiptIDs: [String]
+    private var recentScreenshotFingerprints: [(digest: String, date: Date)] = []
     private var latestClipboard: PhotoClipboard?
     private let receiveQueue = DispatchQueue(label: "local.snapbridge.receive", qos: .userInitiated)
     private let detailQueue = DispatchQueue(label: "local.snapbridge.image-detail", qos: .userInitiated)
@@ -261,6 +263,15 @@ final class MacModel: ObservableObject {
         let start = PerformanceTrace.now()
         receiveQueue.async {
             do {
+                // The legacy AFC watcher and the iOS screenshot automation can
+                // briefly deliver the same original bytes with different IDs.
+                // Collapse only identical image data captured within 10 seconds.
+                let digest = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+                self.recentScreenshotFingerprints.removeAll { abs($0.date.timeIntervalSince(date)) > 10 }
+                if self.recentScreenshotFingerprints.contains(where: { $0.digest == digest }) {
+                    DispatchQueue.main.async { completion(.success(())) }
+                    return
+                }
                 // Bounded receipts prevent retries from resurrecting deleted old photos.
                 if self.photoStore.contains(id) || self.recentReceiptIDs.contains(id.uuidString) {
                     let count = try self.photoStore.retainNewest().count
@@ -276,6 +287,8 @@ final class MacModel: ObservableObject {
                     gridThumbnail = NSImage(cgImage: gridImage, size: NSSize(width: gridImage.width, height: gridImage.height))
                 }
                 let retained = try self.photoStore.save(data, id: id, isPNG: clipboard.originalType == .png)
+                self.recentScreenshotFingerprints.append((digest, date))
+                self.recentScreenshotFingerprints = Array(self.recentScreenshotFingerprints.suffix(40))
                 self.recentReceiptIDs.append(id.uuidString)
                 self.recentReceiptIDs = Array(self.recentReceiptIDs.suffix(256))
                 UserDefaults.standard.set(self.recentReceiptIDs, forKey: "recentReceiptIDs")

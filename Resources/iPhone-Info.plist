@@ -31,6 +31,8 @@
 	<string>Take a photo and send it straight to your paired Mac, ready to paste into a chat.</string>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>ShotSkiff connects to your saved device and transfers the photos you take directly to your Mac.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>ShotSkiff reads the latest screenshot only when its screenshot automation runs, then sends it to your paired Mac.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

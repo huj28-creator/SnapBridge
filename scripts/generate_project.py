@@ -37,6 +37,7 @@ write_plist("Resources/Mac-Info.plist", dict(common_info, **{
 write_plist("Resources/iPhone-Info.plist", dict(common_info, **{
     "LSRequiresIPhoneOS": True,
     "NSCameraUsageDescription": "Take a photo and send it straight to your paired Mac, ready to paste into a chat.",
+    "NSPhotoLibraryUsageDescription": "ShotSkiff reads the latest screenshot only when its screenshot automation runs, then sends it to your paired Mac.",
     "UILaunchScreen": {},
     "UISupportedInterfaceOrientations": ["UIInterfaceOrientationPortrait", "UIInterfaceOrientationLandscapeLeft", "UIInterfaceOrientationLandscapeRight"],
     "UIApplicationSceneManifest": {"UIApplicationSupportsMultipleScenes": False},
@@ -49,7 +50,7 @@ def obj(key, value):
 
 shared = ["Shared/WireProtocol.swift", "Shared/KeychainStore.swift", "Shared/NearbyTransport.swift", "Shared/PhotoProcessing.swift", "Shared/PerformanceTrace.swift", "Shared/FastPhotoChannel.swift"]
 mac = ["Mac/SnapBridgeMac.swift", "Mac/PhoneScreenshots.swift", "Mac/ScreenshotImportSetup.swift", "Shared/PhotoStore.swift", "Mac/PhotoClipboard.swift", "Shared/PhotoBatch.swift"]
-phone = ["iPhone/SnapBridgePhone.swift", "iPhone/CameraController.swift", "iPhone/PhoneModel.swift"]
+phone = ["iPhone/SnapBridgePhone.swift", "iPhone/CameraController.swift", "iPhone/PhoneModel.swift", "iPhone/ScreenshotShortcut.swift"]
 files = shared + mac + phone + ["Resources/Mac-Info.plist", "Resources/iPhone-Info.plist",
                                "Resources/SnapBridgeIcon.icns", "Resources/Assets.xcassets", "Resources/Signing.xcconfig", "scripts/watch_screenshots.py"]
 for path in files:
