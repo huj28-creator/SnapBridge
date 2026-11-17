@@ -119,7 +119,54 @@ def device_arguments(config, transport="network"):
     return args + (["-n"] if transport == "network" else [])
 
 
+def devicectl_json(command, timeout=30, log=None):
+    code, output = run(["/usr/bin/xcrun", "devicectl", "--json-output", "-", *command],
+                       timeout=timeout, log=log)
+    start = output.find('{\n  "')
+    if start < 0:
+        raise RenewalError("deferred", "Apple's wireless device service returned no structured response.")
+    try:
+        result = json.loads(output[start:])
+    except json.JSONDecodeError:
+        raise RenewalError("deferred", "Apple's wireless device service returned an invalid response.")
+    if code or result.get("info", {}).get("outcome") == "failed" or result.get("error"):
+        raise RenewalError("deferred", "Apple's trusted Wi-Fi device service is temporarily unavailable.")
+    return result.get("result", {})
+
+
+def installed_app_via_devicectl(config, home):
+    result = devicectl_json(["device", "info", "apps", "--device", config["device_udid"]],
+                            timeout=30, log=home / "last-device-validation.log")
+    matches = [app for app in result.get("apps", [])
+               if app.get("bundleIdentifier") == config["bundle_id"]]
+    if not matches:
+        raise RenewalError("app_removed", "ShotSkiff is not on this iPhone; it will not be reinstalled automatically.")
+    app = matches[0]
+    if str(app.get("bundleVersion")) != str(config["build_version"]):
+        raise RenewalError("app_changed", "ShotSkiff was updated; revalidate its signing identity before automatic renewal.")
+    # CoreDevice reports the app bundle URL rather than libimobiledevice's
+    # app and data container paths. Profile-only renewal never changes either.
+    return {"CFBundleIdentifier": app.get("bundleIdentifier"),
+            "CFBundleVersion": str(app.get("bundleVersion")),
+            "CFBundleShortVersionString": app.get("version"),
+            "Path": app.get("url")}
+
+
 def installed_app(config, home, transport="network"):
+    if transport == "network":
+        try:
+            return installed_app_via_libimobiledevice(config, home, transport)
+        except RenewalError as error:
+            if error.status != "deferred":
+                raise
+            # Recent Xcode CoreDevice can see a paired iPhone over Wi-Fi when
+            # libimobiledevice's network usbmux endpoint cannot. Use Apple's
+            # own transport as a fallback; never start a new pairing flow.
+            return installed_app_via_devicectl(config, home)
+    return installed_app_via_libimobiledevice(config, home, transport)
+
+
+def installed_app_via_libimobiledevice(config, home, transport):
     args = device_arguments(config, transport)
     # Validate existing trust, never initiate a new pairing workflow.
     validation = ["/opt/homebrew/bin/idevicepair", *args, "validate"]
@@ -256,17 +303,40 @@ def renew(config, state, home, force=False, transport="network", fresh_profile=F
                         str(profile_path)], timeout=25,
                        log=home / "last-profile-install.log")
     # Some tool versions can return zero even when the phone rejects a profile.
-    if code or "installed successfully" not in output.lower():
+    installed = not code and "installed successfully" in output.lower()
+    installed_with_coredevice = False
+    if not installed and transport == "network":
+        # Fall back to Apple's CoreDevice profile installer when its Wi-Fi
+        # pairing is available but libimobiledevice cannot see that endpoint.
+        code, output = run(["/usr/bin/xcrun", "devicectl", "device", "profile", "install",
+                            "--device", config["device_udid"], "--type", "provisioning",
+                            "--replace-existing", str(profile_path)], timeout=60,
+                           log=home / "last-profile-install.log")
+        installed = not code and "profile installed successfully" in output.lower()
+        installed_with_coredevice = installed
+    if not installed:
         raise RenewalError("deferred", "iOS did not confirm the profile update; retry later without changing the app.")
-    with tempfile.TemporaryDirectory(prefix="ProfileCheck-", dir=home) as target:
-        code, _ = run(["/opt/homebrew/bin/ideviceprovision", *args, "copy", p["UUID"], target], timeout=25)
-        copied = Path(target) / (p["UUID"] + ".mobileprovision")
-        if code or not copied.is_file():
-            raise RenewalError("error", "The renewed profile could not be read back from the phone.")
-        if hashlib.sha256(copied.read_bytes()).digest() != hashlib.sha256(profile_path.read_bytes()).digest():
-            raise RenewalError("error", "The device profile differs from the verified signed profile.")
+    if installed_with_coredevice:
+        # A successful CoreDevice install is an explicit device acknowledgement.
+        # Cross-check the UUID when profile listing is available; don't turn a
+        # transient list-service failure into a false renewal failure.
+        code, output = run(["/usr/bin/xcrun", "devicectl", "device", "profile", "list",
+                            "--device", config["device_udid"], "--type", "provisioning",
+                            "--search", p["UUID"]], timeout=30,
+                           log=home / "last-profile-install.log")
+        if not code and p["UUID"].lower() not in output.lower():
+            raise RenewalError("error", "CoreDevice installed the profile but its UUID was absent from the device profile list.")
+    else:
+        with tempfile.TemporaryDirectory(prefix="ProfileCheck-", dir=home) as target:
+            code, _ = run(["/opt/homebrew/bin/ideviceprovision", *args, "copy", p["UUID"], target], timeout=25)
+            copied = Path(target) / (p["UUID"] + ".mobileprovision")
+            if code or not copied.is_file():
+                raise RenewalError("error", "The renewed profile could not be read back from the phone.")
+            if hashlib.sha256(copied.read_bytes()).digest() != hashlib.sha256(profile_path.read_bytes()).digest():
+                raise RenewalError("error", "The device profile differs from the verified signed profile.")
     after = installed_app(config, home, transport)
-    unchanged = all(before.get(k) == after.get(k) for k in ["CFBundleIdentifier", "CFBundleVersion", "Path", "Container"])
+    unchanged = all(before.get(k) == after.get(k) for k in ["CFBundleIdentifier", "CFBundleVersion", "Path", "Container"]
+                    if k in before or k in after)
     if not unchanged:
         raise RenewalError("error", "App metadata changed during profile renewal; automatic renewal is stopped for review.")
     state.update(installed_expiry=stamp(p["ExpirationDate"].replace(tzinfo=UTC)),
