@@ -146,7 +146,10 @@ private final class IntentTransferGate {
         lock.lock()
         timeout = work
         lock.unlock()
-        DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + 12, execute: work)
+        // A cold Mac listener or delayed Bonjour resolution can take longer
+        // than the usual warm connection. Keep retrying rather than abandoning
+        // the screenshot just before the peer authenticates.
+        DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + 30, execute: work)
     }
 
     func finish(_ result: Result<Void, Error>) {
@@ -172,7 +175,7 @@ private enum ShortcutTransferError: LocalizedError {
         case .noScreenshot: return "No saved screenshot was found in Photos."
         case .invalidImage: return "The latest screenshot could not be read as a PNG or JPEG."
         case .connectionLost: return "The local connection dropped while sending the screenshot."
-        case .timeout: return "ShotSkiff couldn't confirm delivery within 12 seconds. The Mac may already have received it, so check its popup before trying again."
+        case .timeout: return "ShotSkiff couldn't confirm delivery within 30 seconds. Check the Mac before retrying; it may already have received the screenshot."
         case .macRejected(let message): return message
         }
     }
