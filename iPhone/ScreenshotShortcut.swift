@@ -17,6 +17,30 @@ struct SendLatestScreenshotIntent: AppIntent {
     }
 }
 
+/// Sends the in-memory output of Shortcuts' Take Screenshot action.
+/// This path deliberately does not read or write the Photos library.
+struct SendCapturedScreenshotIntent: AppIntent {
+    static let title: LocalizedStringResource = "Send Captured Screenshot to Mac"
+    static let description = IntentDescription(
+        "Sends a screenshot provided by another shortcut action to your paired Mac without saving it to Photos."
+    )
+    static let openAppWhenRun = false
+
+    @Parameter(title: "Screenshot", description: "The screenshot captured by the previous shortcut action.")
+    var screenshot: IntentFile
+
+    func perform() async throws -> some IntentResult {
+        var input = screenshot
+        input.removedOnCompletion = true
+        try await ScreenshotShortcutTransfer.send(
+            data: input.data,
+            capturedAt: Date(),
+            source: "captured_screenshot_intent"
+        )
+        return .result()
+    }
+}
+
 struct ShotSkiffAppShortcuts: AppShortcutsProvider {
     static var appShortcuts: [AppShortcut] {
         AppShortcut(
@@ -25,17 +49,17 @@ struct ShotSkiffAppShortcuts: AppShortcutsProvider {
             shortTitle: "Send Screenshot",
             systemImageName: "rectangle.on.rectangle"
         )
+        AppShortcut(
+            intent: SendCapturedScreenshotIntent(),
+            phrases: ["Send captured screenshot with \(.applicationName)"],
+            shortTitle: "Send Capture",
+            systemImageName: "rectangle.on.rectangle"
+        )
     }
 }
 
 private enum ScreenshotShortcutTransfer {
     static func sendLatest() async throws {
-        guard let pairing = KeychainStore.load(PairingRecord.self, key: "paired-mac"),
-              let rawID = UserDefaults.standard.string(forKey: "deviceID"),
-              let deviceID = UUID(uuidString: rawID) else {
-            throw ShortcutTransferError.notPaired
-        }
-
         var authorization = PHPhotoLibrary.authorizationStatus(for: .readWrite)
         if authorization == .notDetermined {
             authorization = await withCheckedContinuation { continuation in
@@ -55,24 +79,34 @@ private enum ScreenshotShortcutTransfer {
         }
 
         let data = try await originalImageData(for: asset)
+        try await send(data: data, capturedAt: capturedAt, source: "screenshot_intent")
+    }
+
+    static func send(data: Data, capturedAt: Date, source: String) async throws {
         guard data.count <= BridgeLimits.maxPhotoBytes else { throw WireError.tooLarge }
         let isJPEG = data.starts(with: [0xFF, 0xD8, 0xFF])
         let isPNG = data.starts(with: [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A])
         guard isPNG || isJPEG else { throw ShortcutTransferError.invalidImage }
 
+        guard let pairing = KeychainStore.load(PairingRecord.self, key: "paired-mac"),
+              let rawID = UserDefaults.standard.string(forKey: "deviceID"),
+              let deviceID = UUID(uuidString: rawID) else {
+            throw ShortcutTransferError.notPaired
+        }
+
         let channel = FastPhotoChannel()
         let photoID = UUID()
-        PerformanceTrace.connection("screenshot_intent_started bytes=\(data.count)")
+        PerformanceTrace.connection("\(source)_started bytes=\(data.count)")
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             let gate = IntentTransferGate(channel: channel, continuation: continuation)
             channel.onReady = { _ in
-                PerformanceTrace.connection("screenshot_sender_ready id=\(photoID.uuidString)")
+                PerformanceTrace.connection("\(source)_sender_ready id=\(photoID.uuidString)")
                 channel.send(WirePacket(
                     header: WireHeader(kind: .photo, id: photoID, createdAt: capturedAt),
                     payload: data
                 )) { result in
                     if case .failure(let error) = result {
-                        PerformanceTrace.connection("screenshot_send_failed id=\(photoID.uuidString)")
+                        PerformanceTrace.connection("\(source)_send_failed id=\(photoID.uuidString)")
                         gate.finish(.failure(error))
                     }
                 }
@@ -81,19 +115,19 @@ private enum ScreenshotShortcutTransfer {
                 guard packet.header.id == photoID else { return }
                 guard packet.header.kind == .received else {
                     if packet.header.kind == .rejected {
-                        PerformanceTrace.connection("screenshot_rejected id=\(photoID.uuidString)")
+                        PerformanceTrace.connection("\(source)_rejected id=\(photoID.uuidString)")
                         gate.finish(.failure(ShortcutTransferError.macRejected(packet.header.message ?? "The Mac could not save the screenshot.")))
                     }
                     return
                 }
-                PerformanceTrace.connection("screenshot_receipt id=\(photoID.uuidString)")
+                PerformanceTrace.connection("\(source)_receipt id=\(photoID.uuidString)")
                 gate.finish(.success(()))
             }
             channel.onDisconnected = {
                 // FastPhotoChannel retries its saved Bonjour endpoint with backoff.
                 // Keep the intent alive so onReady can resend the same id; the Mac
                 // treats that idempotently if it already stored the image.
-                PerformanceTrace.connection("screenshot_connection_dropped id=\(photoID.uuidString)")
+                PerformanceTrace.connection("\(source)_connection_dropped id=\(photoID.uuidString)")
             }
             gate.armTimeout()
             channel.startSender(
