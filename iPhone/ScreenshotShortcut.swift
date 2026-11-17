@@ -26,7 +26,11 @@ struct SendCapturedScreenshotIntent: AppIntent {
     )
     static let openAppWhenRun = false
 
-    @Parameter(title: "Screenshot", description: "The screenshot captured by the previous shortcut action.")
+    @Parameter(
+        title: "Screenshot",
+        description: "The screenshot captured by the previous shortcut action.",
+        inputConnectionBehavior: .connectToPreviousIntentResult
+    )
     var screenshot: IntentFile
 
     func perform() async throws -> some IntentResult {
