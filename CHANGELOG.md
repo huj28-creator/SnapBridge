@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Starting screenshot import registers ShotSkiff to launch at Mac login. The receiver also refreshes macOS's trusted-device Wi-Fi discovery during reconnect recovery.
+
 ## ShotSkiff v0.1.0 — public preview
 
 - Renamed the public product from SnapBridge to ShotSkiff while keeping historical bundle identifiers, local storage paths, Keychain service, and Bonjour service stable for compatibility.

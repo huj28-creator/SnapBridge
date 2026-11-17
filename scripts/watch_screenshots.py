@@ -3,7 +3,9 @@ import ctypes as c
 from concurrent.futures import ThreadPoolExecutor
 import hashlib
 import json
+import os
 import re
+import subprocess
 import struct
 import sys
 import time
@@ -126,6 +128,7 @@ def watch_connection(lib, udid, since, workers):
     active_folder = None
     refresh_at = check_usb_at = 0.0
     sweep_index = 0
+    last_discovery_refresh = 0.0
     delay = 1
     while True:
         try:
@@ -231,6 +234,20 @@ def watch_connection(lib, udid, since, workers):
             if connection is not None:
                 connection.close()
                 connection = None
+            # Match the renewal helper's Wi-Fi recovery path. Finder's device
+            # agent can stop advertising an already trusted iPhone after idle;
+            # kickstarting it refreshes discovery without pairing or prompting.
+            if time.monotonic() - last_discovery_refresh >= 30:
+                try:
+                    subprocess.run(
+                        ["/bin/launchctl", "kickstart",
+                         "gui/" + str(os.getuid()) + "/com.apple.AMPDevicesAgent"],
+                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                        timeout=5, check=False,
+                    )
+                except (OSError, subprocess.TimeoutExpired):
+                    pass
+                last_discovery_refresh = time.monotonic()
             heartbeat()
             time.sleep(delay)
             delay = min(delay * 2, 8)

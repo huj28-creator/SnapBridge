@@ -1,6 +1,7 @@
 import Foundation
 import Combine
 import AppKit
+import ServiceManagement
 
 struct TrustedPhone: Identifiable, Hashable, Sendable {
     let id: String
@@ -74,12 +75,35 @@ final class ScreenshotImportSetup: ObservableObject {
         do {
             try FileManager.default.createDirectory(at: supportDirectory, withIntermediateDirectories: true)
             try Data(phone.id.utf8).write(to: selectedFile, options: .atomic)
+            let startsAtLogin = ensureLaunchAtLogin()
             watcher.start()
             isEnabled = true
-            status = "Ready. New screenshots from \(phone.name) will appear here; existing photos are skipped."
+            if startsAtLogin {
+                status = "Ready. ShotSkiff will start at login and reconnect to \(phone.name); existing photos are skipped."
+            }
         } catch {
             status = "Could not save the iPhone selection: \(error.localizedDescription)"
         }
+    }
+
+    @discardableResult
+    func ensureLaunchAtLogin() -> Bool {
+        if SMAppService.mainApp.status != .enabled {
+            do { try SMAppService.mainApp.register() }
+            catch {
+                status = "Screenshot importing is active, but automatic startup needs approval in System Settings → General → Login Items."
+                return false
+            }
+        }
+        if SMAppService.mainApp.status == .requiresApproval {
+            status = "Screenshot importing is active, but approve ShotSkiff in System Settings → General → Login Items."
+            return false
+        }
+        let enabled = SMAppService.mainApp.status == .enabled
+        if !enabled {
+            status = "Screenshot importing is active, but ShotSkiff is not enabled in System Settings → General → Login Items."
+        }
+        return enabled
     }
 
     func disable() {

@@ -53,7 +53,10 @@ final class MacDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         if let screenshots {
             screenshotSetup = ScreenshotImportSetup(watcher: screenshots)
-            if screenshotSetup?.isEnabled == true { screenshots.start() }
+            if screenshotSetup?.isEnabled == true {
+                screenshots.start()
+                screenshotSetup?.ensureLaunchAtLogin()
+            }
         }
         if !model.transport.hasPairedPhone || CommandLine.arguments.contains("--pair") { showSetup() }
     }
