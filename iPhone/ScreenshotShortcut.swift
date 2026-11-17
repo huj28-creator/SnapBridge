@@ -62,28 +62,38 @@ private enum ScreenshotShortcutTransfer {
 
         let channel = FastPhotoChannel()
         let photoID = UUID()
+        PerformanceTrace.connection("screenshot_intent_started bytes=\(data.count)")
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             let gate = IntentTransferGate(channel: channel, continuation: continuation)
             channel.onReady = { _ in
+                PerformanceTrace.connection("screenshot_sender_ready id=\(photoID.uuidString)")
                 channel.send(WirePacket(
                     header: WireHeader(kind: .photo, id: photoID, createdAt: capturedAt),
                     payload: data
                 )) { result in
-                    if case .failure(let error) = result { gate.finish(.failure(error)) }
+                    if case .failure(let error) = result {
+                        PerformanceTrace.connection("screenshot_send_failed id=\(photoID.uuidString)")
+                        gate.finish(.failure(error))
+                    }
                 }
             }
             channel.onPacket = { packet, _ in
                 guard packet.header.id == photoID else { return }
                 guard packet.header.kind == .received else {
                     if packet.header.kind == .rejected {
+                        PerformanceTrace.connection("screenshot_rejected id=\(photoID.uuidString)")
                         gate.finish(.failure(ShortcutTransferError.macRejected(packet.header.message ?? "The Mac could not save the screenshot.")))
                     }
                     return
                 }
+                PerformanceTrace.connection("screenshot_receipt id=\(photoID.uuidString)")
                 gate.finish(.success(()))
             }
             channel.onDisconnected = {
-                gate.finish(.failure(ShortcutTransferError.connectionLost))
+                // FastPhotoChannel retries its saved Bonjour endpoint with backoff.
+                // Keep the intent alive so onReady can resend the same id; the Mac
+                // treats that idempotently if it already stored the image.
+                PerformanceTrace.connection("screenshot_connection_dropped id=\(photoID.uuidString)")
             }
             gate.armTimeout()
             channel.startSender(
@@ -161,8 +171,8 @@ private enum ShortcutTransferError: LocalizedError {
         case .photosAccess: return "Allow ShotSkiff access to Photos once, then retry the screenshot automation."
         case .noScreenshot: return "No saved screenshot was found in Photos."
         case .invalidImage: return "The latest screenshot could not be read as a PNG or JPEG."
-        case .connectionLost: return "ShotSkiff lost the local connection before the screenshot reached your Mac."
-        case .timeout: return "Your Mac did not confirm the screenshot within 12 seconds. Keep ShotSkiff running on the Mac and try again."
+        case .connectionLost: return "The local connection dropped while sending the screenshot."
+        case .timeout: return "ShotSkiff couldn't confirm delivery within 12 seconds. The Mac may already have received it, so check its popup before trying again."
         case .macRejected(let message): return message
         }
     }
